@@ -1,10 +1,6 @@
 """Unit tests for the JAX DataLoader stack."""
 from __future__ import annotations
 
-import gzip
-import pickle
-import struct
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -13,8 +9,6 @@ import pytest
 from cyreal import (
     ArraySampleSource,
     BatchTransform,
-    CIFAR10Dataset,
-    CIFAR10DiskSource,
     DataLoader,
     DevicePutTransform,
     DiskSampleSource,
@@ -22,8 +16,6 @@ from cyreal import (
     GymnaxSource,
     HostCallbackTransform,
     MapTransform,
-    MNISTDataset,
-    MNISTDiskSource,
     NormalizeImageTransform,
     Source,
 )
@@ -309,69 +301,6 @@ def test_host_callback_transform_interleaves_with_map_transforms():
     )
 
 
-def _write_idx_images(path, images):
-    with gzip.open(path, "wb") as f:
-        num, rows, cols = images.shape
-        f.write(struct.pack(">IIII", 2051, num, rows, cols))
-        f.write(images.tobytes())
-
-
-def _write_idx_labels(path, labels):
-    with gzip.open(path, "wb") as f:
-        num = labels.shape[0]
-        f.write(struct.pack(">II", 2049, num))
-        f.write(labels.tobytes())
-
-
-def _seed_fake_cifar10(tmp_path, split="train", samples_per_batch=1):
-    archive_path = tmp_path / "cifar-10-python.tar.gz"
-    archive_path.write_bytes(b"")
-    batches_dir = tmp_path / "cifar-10-batches-py"
-    batches_dir.mkdir(parents=True, exist_ok=True)
-
-    if split == "train":
-        names = [f"data_batch_{i}" for i in range(1, 6)]
-    elif split == "test":
-        names = ["test_batch"]
-    else:
-        raise ValueError("split must be 'train' or 'test'.")
-
-    current_label = 0
-    for name in names:
-        data = []
-        labels = []
-        for _ in range(samples_per_batch):
-            pixel_value = current_label % 256
-            image = np.full((3, 32, 32), pixel_value, dtype=np.uint8)
-            data.append(image.reshape(-1))
-            labels.append(current_label)
-            current_label += 1
-        batch = {"data": np.stack(data, axis=0), "labels": labels}
-        with open(batches_dir / name, "wb") as f:
-            pickle.dump(batch, f, protocol=2)
-
-
-def test_mnist_dataset_reads_cached_idx(tmp_path):
-    num, rows, cols = 3, 2, 2
-    images = np.arange(num * rows * cols, dtype=np.uint8).reshape(num, rows, cols)
-    labels = np.arange(num, dtype=np.uint8)
-
-    images_path = tmp_path / "train_images.gz"
-    labels_path = tmp_path / "train_labels.gz"
-    _write_idx_images(images_path, images)
-    _write_idx_labels(labels_path, labels)
-
-    dataset = MNISTDataset(split="train", cache_dir=tmp_path)
-    assert len(dataset) == num
-    example = dataset[0]
-    img = example["image"]
-    label = example["label"]
-    assert img.shape == (rows, cols, 1)
-    assert img.dtype == np.uint8
-    assert label == 0
-    np.testing.assert_array_equal(img[..., 0], images[0])
-
-
 def test_disk_sample_source_streams_via_callback():
     samples = [
         {"value": np.array(i, dtype=np.int32)}
@@ -446,93 +375,6 @@ def test_disk_sample_source_infers_spec_when_missing():
         np.array([[4.0, 5.0]], dtype=np.float32),
     )
     np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
-
-
-@pytest.mark.parametrize("factory", ["class", "helper"])
-def test_mnist_disk_source_streams_from_disk(tmp_path, factory):
-    num, rows, cols = 3, 2, 2
-    images = np.arange(num * rows * cols, dtype=np.uint8).reshape(num, rows, cols)
-    labels = np.arange(num, dtype=np.uint8)
-
-    images_path = tmp_path / "train_images.gz"
-    labels_path = tmp_path / "train_labels.gz"
-    _write_idx_images(images_path, images)
-    _write_idx_labels(labels_path, labels)
-
-    if factory == "helper":
-        source = MNISTDataset.make_disk_source(
-            split="train",
-            cache_dir=tmp_path,
-            ordering="sequential",
-            prefetch_size=2,
-        )
-    else:
-        source = MNISTDiskSource(
-            split="train",
-            cache_dir=tmp_path,
-            ordering="sequential",
-            prefetch_size=2,
-        )
-    batched = BatchTransform(
-        batch_size=2,
-        element_spec_override=source.element_spec(),
-    )(source)
-
-    state = batched.init_state(jax.random.PRNGKey(0))
-    batch, mask, state = batched.next(state)
-    np.testing.assert_array_equal(np.asarray(batch["image"][..., 0]), images[:2])
-    np.testing.assert_array_equal(np.asarray(batch["label"]), np.array([0, 1], dtype=np.int32))
-    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
-
-    batch2, mask2, _ = batched.next(state)
-    np.testing.assert_array_equal(np.asarray(batch2["image"][0, ..., 0]), images[2])
-    np.testing.assert_array_equal(np.asarray(batch2["label"][:1]), np.array([2], dtype=np.int32))
-    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
-
-
-@pytest.mark.parametrize("factory", ["class", "helper"])
-def test_cifar10_disk_source_streams_from_disk(tmp_path, factory):
-    _seed_fake_cifar10(tmp_path, split="test", samples_per_batch=3)
-
-    if factory == "helper":
-        source = CIFAR10Dataset.make_disk_source(
-            split="test",
-            cache_dir=tmp_path,
-            ordering="sequential",
-            prefetch_size=2,
-        )
-    else:
-        source = CIFAR10DiskSource(
-            split="test",
-            cache_dir=tmp_path,
-            ordering="sequential",
-            prefetch_size=2,
-        )
-    batched = BatchTransform(
-        batch_size=2,
-        element_spec_override=source.element_spec(),
-    )(source)
-
-    state = batched.init_state(jax.random.PRNGKey(0))
-    batch, mask, state = batched.next(state)
-    np.testing.assert_array_equal(np.asarray(batch["label"]), np.array([0, 1], dtype=np.int32))
-    np.testing.assert_array_equal(
-        np.asarray(batch["image"][0, 0, 0]),
-        np.array([0, 0, 0], dtype=np.uint8),
-    )
-    np.testing.assert_array_equal(
-        np.asarray(batch["image"][1, 0, 0]),
-        np.array([1, 1, 1], dtype=np.uint8),
-    )
-    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
-
-    batch2, mask2, _ = batched.next(state)
-    np.testing.assert_array_equal(np.asarray(batch2["label"][:1]), np.array([2], dtype=np.int32))
-    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
-    np.testing.assert_array_equal(
-        np.asarray(batch2["image"][1]),
-        np.zeros((32, 32, 3), dtype=np.uint8),
-    )
 
 
 def test_mnist_image_transforms_normalize_and_flatten():

@@ -2,7 +2,15 @@
 from __future__ import annotations
 
 from .dataset_protocol import DatasetProtocol
-from .datasets import CIFAR10Dataset, CIFAR10DiskSource, MNISTDataset, MNISTDiskSource
+from .datasets import (
+    CIFAR10Dataset,
+    CIFAR100Dataset,
+    EMNISTDataset,
+    FashionMNISTDataset,
+    KMNISTDataset,
+    Kuzushiji49Dataset,
+    MNISTDataset,
+)
 from .loader import (
     DataLoader,
     LoaderState,
@@ -22,9 +30,12 @@ __all__ = [
     "DataLoader",
     "LoaderState",
     "CIFAR10Dataset",
-    "CIFAR10DiskSource",
+    "CIFAR100Dataset",
+    "EMNISTDataset",
+    "FashionMNISTDataset",
+    "KMNISTDataset",
+    "Kuzushiji49Dataset",
     "MNISTDataset",
-    "MNISTDiskSource",
     "ArraySampleSource",
     "DiskSampleSource",
     "GymnaxSource",

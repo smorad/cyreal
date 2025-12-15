@@ -1,4 +1,4 @@
-"""MNIST dataset utilities without Torch dependencies."""
+"""Fashion-MNIST dataset utilities."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -21,17 +21,17 @@ from ._mnist_like import (
     to_host_jax_array as _to_host_jax_array,
 )
 
-MNIST_URLS = {
-    "train_images": "https://storage.googleapis.com/cvdf-datasets/mnist/train-images-idx3-ubyte.gz",
-    "train_labels": "https://storage.googleapis.com/cvdf-datasets/mnist/train-labels-idx1-ubyte.gz",
-    "test_images": "https://storage.googleapis.com/cvdf-datasets/mnist/t10k-images-idx3-ubyte.gz",
-    "test_labels": "https://storage.googleapis.com/cvdf-datasets/mnist/t10k-labels-idx1-ubyte.gz",
+FASHION_MNIST_URLS = {
+    "train_images": "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-images-idx3-ubyte.gz",
+    "train_labels": "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/train-labels-idx1-ubyte.gz",
+    "test_images": "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-images-idx3-ubyte.gz",
+    "test_labels": "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/t10k-labels-idx1-ubyte.gz",
 }
 
 
 @dataclass
-class MNISTDataset(DatasetProtocol):
-    """Lightweight MNIST dataset that leaves preprocessing to transforms."""
+class FashionMNISTDataset(DatasetProtocol):
+    """Zalando's Fashion-MNIST dataset without Torch dependencies."""
 
     split: Literal["train", "test"] = "train"
     cache_dir: str | Path | None = None
@@ -40,15 +40,15 @@ class MNISTDataset(DatasetProtocol):
         base_dir = (
             Path(self.cache_dir)
             if self.cache_dir is not None
-            else Path.home() / ".cache" / "jax_mnist"
+            else Path.home() / ".cache" / "fashion_mnist"
         )
         self.cache_dir = base_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         images_file = self.cache_dir / f"{self.split}_images.gz"
         labels_file = self.cache_dir / f"{self.split}_labels.gz"
 
-        _ensure_file(images_file, MNIST_URLS[f"{self.split}_images"])
-        _ensure_file(labels_file, MNIST_URLS[f"{self.split}_labels"])
+        _ensure_file(images_file, FASHION_MNIST_URLS[f"{self.split}_images"])
+        _ensure_file(labels_file, FASHION_MNIST_URLS[f"{self.split}_labels"])
 
         images = _read_idx_images(images_file)[..., None].astype(np.uint8)
         labels = _read_idx_labels(labels_file).astype(np.int32)
@@ -82,13 +82,17 @@ class MNISTDataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSampleSource:
-        base_dir = Path(cache_dir) if cache_dir is not None else Path.home() / ".cache" / "jax_mnist"
+        base_dir = (
+            Path(cache_dir)
+            if cache_dir is not None
+            else Path.home() / ".cache" / "fashion_mnist"
+        )
         base_dir.mkdir(parents=True, exist_ok=True)
 
         images_gz = base_dir / f"{split}_images.gz"
         labels_gz = base_dir / f"{split}_labels.gz"
-        _ensure_file(images_gz, MNIST_URLS[f"{split}_images"])
-        _ensure_file(labels_gz, MNIST_URLS[f"{split}_labels"])
+        _ensure_file(images_gz, FASHION_MNIST_URLS[f"{split}_images"])
+        _ensure_file(labels_gz, FASHION_MNIST_URLS[f"{split}_labels"])
 
         images_path = _ensure_uncompressed_idx(images_gz)
         labels_path = _ensure_uncompressed_idx(labels_gz)
@@ -96,7 +100,7 @@ class MNISTDataset(DatasetProtocol):
         num_images, rows, cols = _read_image_header(images_path)
         num_labels = _read_label_header(labels_path)
         if num_images != num_labels:
-            raise ValueError("MNIST image/label counts do not match.")
+            raise ValueError("Fashion-MNIST image/label counts do not match.")
 
         images_memmap = np.memmap(
             images_path,
