@@ -143,9 +143,7 @@ class ArraySampleSource:
 
         return base, self._mask_template
 
-    def init_state(self, key: jax.Array | None = None) -> ArraySourceState:
-        if key is None:
-            key = jax.random.PRNGKey(0)
+    def init_state(self, key: jax.Array) -> ArraySourceState:
         key, perm_key = jax.random.split(key)
         indices, mask = self._build_epoch_indices(perm_key)
         position = jnp.array(0, dtype=jnp.int32)
@@ -372,14 +370,32 @@ class GymnaxSourceState:
     key: jax.Array
     step: jax.Array
     epoch: jax.Array
+    policy_state: PyTree | None = None
+    new_episode: jax.Array | None = None
 
     def tree_flatten(self):
-        return (self.env_state, self.obs, self.key, self.step, self.epoch), None
+        return (
+            self.env_state,
+            self.obs,
+            self.key,
+            self.step,
+            self.epoch,
+            self.policy_state,
+            self.new_episode,
+        ), None
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        env_state, obs, key, step, epoch = children
-        return cls(env_state=env_state, obs=obs, key=key, step=step, epoch=epoch)
+        env_state, obs, key, step, epoch, policy_state, new_episode = children
+        return cls(
+            env_state=env_state,
+            obs=obs,
+            key=key,
+            step=step,
+            epoch=epoch,
+            policy_state=policy_state,
+            new_episode=new_episode,
+        )
 
 
 @dataclass
@@ -391,37 +407,57 @@ class GymnaxSource(Source):
     Args:
         env: Gymnax environment instance.
         env_params: Parameters to pass to the environment's reset and step functions.
-        policy_fn: Callable that takes (observation, policy_params, key) and returns an action.
-        policy_params: Optional parameters to pass to the policy function.
-        steps_per_epoch: Number of environment steps per epoch.
+        policy_step_fn: Callable that takes (observation, policy_state, new_episode, key) and
+            returns (action, new_policy_state).
+        policy_state_template: Example PyTree carrying everything required by
+            ``policy_step_fn`` (for example, policy parameters and recurrent
+            carries). This template is used only to infer the element spec; callers
+            are responsible for injecting a real policy state into the loader
+            state before calling ``next``.
+        steps_per_epoch: Number of environment steps per epoch for a single environment.
     """
 
     env: Any
     env_params: Any
-    policy_fn: Callable[[PyTree, Any, jax.Array], PyTree]
-    policy_params: Any | None = None
+    policy_step_fn: Callable[[PyTree, PyTree, jax.Array, jax.Array], tuple[PyTree, PyTree]]
+    policy_state_template: PyTree | None = None
     steps_per_epoch: int = 1024
 
     def __post_init__(self) -> None:
         if self.steps_per_epoch <= 0:
             raise ValueError("steps_per_epoch must be positive.")
+        if self.policy_state_template is None:
+            raise ValueError("GymnaxSource requires a policy_state_template for shape inference.")
 
-        def _sample(key):
+        def _sample(key, policy_state):
             obs, env_state = self.env.reset(key, self.env_params)
-            action = self.policy_fn(obs, self.policy_params, key)
-            next_obs, _, reward, done, _ = self.env.step(key, env_state, action, self.env_params)
-            return {
+            action, next_policy_state = self.policy_step_fn(
+                obs,
+                policy_state,
+                jnp.array(True, dtype=jnp.bool_),
+                key,
+            )
+            next_obs, _, reward, done, info = self.env.step(
+                key,
+                env_state,
+                action,
+                self.env_params,
+            )
+            transition = {
                 "state": obs,
                 "action": action,
                 "reward": reward,
                 "next_state": next_obs,
                 "done": done,
+                "info": info,
             }
+            return transition, next_policy_state
 
-        shaped = jax.eval_shape(_sample, jax.random.PRNGKey(0))
+        shaped, _ = jax.eval_shape(_sample, jax.random.PRNGKey(0), self.policy_state_template)
         self._element_spec = tree_util.tree_map(
             lambda arr: jax.ShapeDtypeStruct(shape=arr.shape, dtype=arr.dtype), shaped
         )
+        self.policy_state_template = None
 
     def element_spec(self) -> PyTree:
         return self._element_spec
@@ -437,14 +473,33 @@ class GymnaxSource(Source):
             key=key,
             step=jnp.array(0, dtype=jnp.int32),
             epoch=jnp.array(0, dtype=jnp.int32),
+            policy_state=None,
+            new_episode=jnp.array(True, dtype=jnp.bool_),
         )
 
     def next(self, state: GymnaxSourceState):
         key, policy_key, step_key, done_reset_key, epoch_reset_key = jax.random.split(state.key, 5)
 
-        action = self.policy_fn(state.obs, self.policy_params, policy_key)
-        next_obs, next_env_state, reward, done, _ = self.env.step(
-            step_key, state.env_state, action, self.env_params
+        if state.policy_state is None:
+            raise ValueError(
+                "GymnaxSource state is missing `policy_state`; set it explicitly before calling `next`."
+            )
+        policy_state = state.policy_state
+
+        if state.new_episode is None:
+            raise ValueError("GymnaxSource state is missing `new_episode` flag.")
+
+        action, updated_policy_state = self.policy_step_fn(
+            state.obs,
+            policy_state,
+            state.new_episode,
+            policy_key,
+        )
+        next_obs, next_env_state, reward, done, info = self.env.step(
+            step_key,
+            state.env_state,
+            action,
+            self.env_params,
         )
 
         transition = {
@@ -453,21 +508,19 @@ class GymnaxSource(Source):
             "reward": reward,
             "next_state": next_obs,
             "done": done,
+            "info": info,
         }
         mask = jnp.array(True, dtype=bool)
 
-        done_flag = jnp.all(jnp.asarray(done, dtype=bool))
+        done_flag = jnp.asarray(done, dtype=bool)
+        done_flag = jnp.reshape(done_flag, ())
         reset_obs, reset_env_state = self.env.reset(done_reset_key, self.env_params)
 
-        cont_obs = tree_util.tree_map(
-            lambda new, res: jax.lax.select(done_flag, res, new),
-            next_obs,
-            reset_obs,
-        )
-        cont_env_state = tree_util.tree_map(
-            lambda new, res: jax.lax.select(done_flag, res, new),
-            next_env_state,
-            reset_env_state,
+        cont_obs, cont_env_state = jax.lax.cond(
+            done_flag,
+            lambda _: (reset_obs, reset_env_state),
+            lambda _: (next_obs, next_env_state),
+            operand=None,
         )
 
         next_step = state.step + 1
@@ -481,6 +534,8 @@ class GymnaxSource(Source):
                 key=key,
                 step=jnp.array(0, dtype=jnp.int32),
                 epoch=state.epoch + 1,
+                policy_state=updated_policy_state,
+                new_episode=jnp.array(True, dtype=jnp.bool_),
             )
 
         def _continue(_: None):
@@ -490,6 +545,8 @@ class GymnaxSource(Source):
                 key=key,
                 step=next_step,
                 epoch=state.epoch,
+                policy_state=updated_policy_state,
+                new_episode=done_flag,
             )
 
         new_state = jax.lax.cond(need_epoch_reset, _reset_epoch, _continue, operand=None)

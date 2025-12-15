@@ -39,6 +39,12 @@ for batch, mask in loader.iterate(state):
   ...  # train your network!
 ```
 
+See full training examples:
+- [MNIST](examples/mnist_equinox.py)
+- [Time Series](examples/time_series_rnn.py)
+- [Reinforcement Learning](examples/cartpole_pg.py)
+
+
 ## Scan and Avoid Boilerplate 
 
 `DataLoader.scan_epoch` will run a full pass through the dataset into a single
@@ -153,4 +159,57 @@ loader = DataLoader(
     HostCallbackTransform(fn=log_loss),
   ],
 )
+```
+
+## Reinforcement Learning 
+
+`GymnaxSource` streams transitions from any Gymnax environment one instance at a time. Keep the
+policy's trainable parameters and recurrent carries inside the ``policy_state`` and use the
+provided helpers (`loader.set_policy_state`, `GymnaxSource.set_policy_state`) to inject that state
+before calling ``next``. This design keeps the pipeline ergonomic (one method call) while still
+making `jax.vmap` straightforward for batched rollouts. Your `policy_step_fn` also receives a
+boolean ``new_episode`` flag so it can reset its own recurrent state whenever the environment restarts.
+
+```python
+import gymnax
+import jax
+import jax.numpy as jnp
+
+from cyreal import BatchTransform, DataLoader, GymnaxSource
+from cyreal.rl import set_loader_policy_state, set_source_policy_state
+
+env = gymnax.environments.classic_control.cartpole.CartPole()
+env_params = env.default_params
+
+def policy_step(obs, policy_state, new_episode, key):
+    del new_episode
+    logits = obs @ policy_state["params"]
+    action = jax.random.categorical(key, logits=logits)
+    return action, policy_state
+
+policy_state = {
+    "params": jnp.zeros((4, 2)),
+    "recurrent_state": jnp.zeros((3,)),
+}
+
+source = GymnaxSource(
+    env=env,
+    env_params=env_params,
+    policy_step_fn=policy_step,
+    policy_state_template=policy_state,
+    steps_per_epoch=16,
+)
+pipeline = [
+    source,
+    BatchTransform(batch_size=16, drop_last=True),
+]
+loader = DataLoader(pipeline)
+state = loader.init_state(jax.random.PRNGKey(0))
+state = set_loader_policy_state(state, policy_state)
+
+# Perform one epoch
+for batch, mask in loader.iterate(state):
+    # Update the policy state (parameters) after each epoch
+    policy_state.update({"params": jnp.ones((4, 2))})
+    state = set_loader_policy_state(state, policy_state)
 ```

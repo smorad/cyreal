@@ -15,9 +15,13 @@ from cyreal import (
     BatchTransform,
     DataLoader,
     DevicePutTransform,
+    GymnaxSource,
     HostCallbackTransform,
     MNISTDataset,
 )
+from cyreal.rl import set_loader_policy_state, set_source_policy_state
+
+import gymnax
 
 
 def _write_idx_images(path: Path, images: np.ndarray) -> None:
@@ -178,3 +182,45 @@ def test_readme_host_callback_example_runs(capsys):
     assert mask.shape == (128,)
     assert "loss:" in capsys.readouterr().out
     assert batch.keys() == {"image", "label"}
+
+
+def test_readme_rl_example_runs():
+    env = gymnax.environments.classic_control.cartpole.CartPole()
+    env_params = env.default_params
+
+    def policy_step(obs, policy_state, new_episode, key):
+        del new_episode
+        logits = obs @ policy_state["params"]
+        action = jax.random.categorical(key, logits=logits)
+        return action, policy_state
+
+    policy_state = {
+        "params": jnp.zeros((4, 2)),
+        "recurrent_state": jnp.zeros((3,)),
+    }
+
+    source = GymnaxSource(
+        env=env,
+        env_params=env_params,
+        policy_step_fn=policy_step,
+        policy_state_template=policy_state,
+        steps_per_epoch=16,
+    )
+    pipeline = [
+        source,
+        BatchTransform(batch_size=16, drop_last=True),
+    ]
+    loader = DataLoader(pipeline)
+    state = loader.init_state(jax.random.PRNGKey(0))
+    state = set_loader_policy_state(state, policy_state)
+
+    batch, state, mask = loader.next(state)
+    assert batch["state"].shape[0] == 16
+    assert mask.shape == (16,)
+
+    keys = jax.random.split(jax.random.PRNGKey(1), 4)
+    batched_state = jax.vmap(source.init_state)(keys)
+    batched_state = jax.vmap(lambda s: set_source_policy_state(s, policy_state))(batched_state)
+    transition, batched_mask, _ = jax.vmap(source.next)(batched_state)
+    assert transition["action"].shape[0] == 4
+    assert batched_mask.shape[0] == 4

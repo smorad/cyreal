@@ -21,7 +21,7 @@ setup(
         "numpy",
     ],
     extras_require={
-        "dev": ["pytest"],
+        "dev": ["pytest", "equinox", "optax", "tqdm", "stable-gymnax"],
     },
     include_package_data=True,
     classifiers=[

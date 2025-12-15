@@ -39,6 +39,7 @@ __all__ = [
     "ArraySampleSource",
     "DiskSampleSource",
     "GymnaxSource",
+    "VectorGymnaxSource",
     "Source",
     "BatchTransform",
     "DevicePutTransform",

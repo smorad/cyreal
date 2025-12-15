@@ -20,6 +20,7 @@ from cyreal import (
     Source,
     TimeSeriesBatchTransform,
 )
+from cyreal.rl import set_loader_policy_state, set_source_policy_state
 
 
 def test_next_padding_and_epoch_reset():
@@ -500,9 +501,10 @@ class _ToyGymnaxEnv:
         return obs, next_state, reward, done, info
 
 
-def _toy_policy(obs, params, key):
-    del obs, key
-    return jnp.asarray(params["action"], dtype=jnp.float32)
+def _toy_policy_step(obs, policy_state, new_episode, key):
+    del obs, new_episode, key
+    action = jnp.asarray(policy_state["action"], dtype=jnp.float32)
+    return action, policy_state
 
 
 def test_gymnax_source_rollout_and_epoch_reset():
@@ -510,17 +512,46 @@ def test_gymnax_source_rollout_and_epoch_reset():
     source = GymnaxSource(
         env=env,
         env_params={"threshold": 2.0},
-        policy_fn=_toy_policy,
-        policy_params={"action": 1.0},
+        policy_step_fn=_toy_policy_step,
+        policy_state_template={"action": jnp.array(1.0, dtype=jnp.float32)},
         steps_per_epoch=3,
     )
 
     state = source.init_state(jax.random.PRNGKey(0))
+    state = set_source_policy_state(state, {"action": jnp.array(1.0, dtype=jnp.float32)})
     transition, mask, state = source.next(state)
     assert bool(mask)
-    assert set(transition.keys()) == {"state", "action", "reward", "next_state", "done"}
+    assert set(transition.keys()) == {"state", "action", "reward", "next_state", "done", "info"}
+    assert transition["info"] == {}
 
     # Run through an epoch and ensure epoch counter advances.
     for _ in range(2):
         _, _, state = source.next(state)
     assert int(state.epoch) == 1
+
+    # Ensure policy state continues to propagate through epochs.
+    assert jnp.asarray(state.policy_state["action"]).shape == ()
+
+
+def test_loader_set_policy_state_delegates_through_transforms():
+    env = _ToyGymnaxEnv()
+    source = GymnaxSource(
+        env=env,
+        env_params={"threshold": 2.0},
+        policy_step_fn=_toy_policy_step,
+        policy_state_template={"action": jnp.array(1.0, dtype=jnp.float32)},
+        steps_per_epoch=4,
+    )
+    pipeline = [
+        source,
+        BatchTransform(batch_size=2, drop_last=False),
+        MapTransform(lambda batch, mask: batch),
+    ]
+    loader = DataLoader(pipeline=pipeline)
+    loader_state = loader.init_state(jax.random.PRNGKey(1))
+    policy_state = {"action": jnp.array(2.0, dtype=jnp.float32)}
+    loader_state = set_loader_policy_state(loader_state, policy_state)
+
+    batch, loader_state, mask = loader.next(loader_state)
+    assert batch["action"].shape[0] == 2
+    assert bool(mask[0])
