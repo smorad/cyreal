@@ -11,14 +11,17 @@ import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
 from ..sources import DiskSampleSource
-from ._mnist_like import (
+from .fs_utils import (
     ensure_file as _ensure_file,
+    resolve_cache_dir,
+    to_host_jax_array as _to_host_jax_array,
+)
+from .mnist_utils import (
     ensure_uncompressed_idx as _ensure_uncompressed_idx,
     read_image_header as _read_image_header,
     read_idx_images as _read_idx_images,
     read_idx_labels as _read_idx_labels,
     read_label_header as _read_label_header,
-    to_host_jax_array as _to_host_jax_array,
 )
 
 EMNIST_BASE = "https://storage.googleapis.com/cvdf-datasets/mnist"
@@ -54,14 +57,6 @@ EMNIST_URLS = {
         "test_labels": f"{EMNIST_BASE}/emnist-letters-test-labels-idx1-ubyte.gz",
     },
 }
-
-
-def _resolve_cache_dir(cache_dir: str | Path | None, subset: str) -> Path:
-    if cache_dir is not None:
-        return Path(cache_dir)
-    return Path.home() / ".cache" / "emnist" / subset
-
-
 @dataclass
 class EMNISTDataset(DatasetProtocol):
     """Extended MNIST dataset family that covers multiple subsets."""
@@ -73,8 +68,7 @@ class EMNISTDataset(DatasetProtocol):
     def __post_init__(self) -> None:
         if self.subset not in EMNIST_URLS:
             raise ValueError(f"Unknown EMNIST subset '{self.subset}'.")
-        base_dir = _resolve_cache_dir(self.cache_dir, self.subset)
-        base_dir.mkdir(parents=True, exist_ok=True)
+        base_dir = resolve_cache_dir(self.cache_dir, default_name=f"emnist/{self.subset}")
         images_file = base_dir / f"{self.split}_images.gz"
         labels_file = base_dir / f"{self.split}_labels.gz"
 
@@ -116,8 +110,7 @@ class EMNISTDataset(DatasetProtocol):
     ) -> DiskSampleSource:
         if subset not in EMNIST_URLS:
             raise ValueError(f"Unknown EMNIST subset '{subset}'.")
-        base_dir = _resolve_cache_dir(cache_dir, subset)
-        base_dir.mkdir(parents=True, exist_ok=True)
+        base_dir = resolve_cache_dir(cache_dir, default_name=f"emnist/{subset}")
 
         images_gz = base_dir / f"{split}_images.gz"
         labels_gz = base_dir / f"{split}_labels.gz"

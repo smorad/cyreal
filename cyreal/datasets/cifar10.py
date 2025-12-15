@@ -14,23 +14,9 @@ import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
 from ..sources import DiskSampleSource
+from .fs_utils import resolve_cache_dir, to_host_jax_array as _to_host_jax_array
 
 CIFAR10_URL = "https://www.cs.toronto.edu/~kriz/cifar-10-python.tar.gz"
-
-
-def _to_host_jax_array(array: np.ndarray) -> jax.Array:
-    cpu_devices = jax.devices("cpu")
-    if cpu_devices:
-        with jax.default_device(cpu_devices[0]):
-            return jnp.asarray(array)
-    return jnp.asarray(array)
-
-
-def _resolve_cache_dir(cache_dir: str | Path | None) -> Path:
-    base_dir = Path(cache_dir) if cache_dir is not None else Path.home() / ".cache" / "cyreal_cifar10"
-    base_dir.mkdir(parents=True, exist_ok=True)
-    return base_dir
-
 
 def _download(url: str, path: Path) -> Path:
     if path.exists():
@@ -99,7 +85,7 @@ class CIFAR10Dataset(DatasetProtocol):
     cache_dir: str | Path | None = None
 
     def __post_init__(self) -> None:
-        base_dir = _resolve_cache_dir(self.cache_dir)
+        base_dir = resolve_cache_dir(self.cache_dir, default_name="cyreal_cifar10")
         archive_path = base_dir / "cifar-10-python.tar.gz"
         _download(CIFAR10_URL, archive_path)
         extract_dir = _ensure_extracted(archive_path, base_dir)
@@ -134,7 +120,7 @@ class CIFAR10Dataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSampleSource:
-        base_dir = _resolve_cache_dir(cache_dir)
+        base_dir = resolve_cache_dir(cache_dir, default_name="cyreal_cifar10")
         archive_path = base_dir / "cifar-10-python.tar.gz"
         _download(CIFAR10_URL, archive_path)
         extract_dir = _ensure_extracted(archive_path, base_dir)

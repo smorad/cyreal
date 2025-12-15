@@ -1,7 +1,6 @@
 """Time-series datasets built on simple CSV downloads."""
 from __future__ import annotations
 
-import shutil
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +12,7 @@ import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
 from ..sources import DiskSampleSource
+from .fs_utils import resolve_cache_dir, to_host_jax_array as _to_host_jax_array
 
 DAILY_MIN_TEMPS_URL = (
     "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
@@ -20,25 +20,6 @@ DAILY_MIN_TEMPS_URL = (
 SUNSPOTS_URL = (
     "https://raw.githubusercontent.com/jbrownlee/Datasets/master/monthly-sunspots.csv"
 )
-
-
-def _to_host_jax_array(array: np.ndarray) -> jax.Array:
-    cpu_devices = jax.devices("cpu")
-    if cpu_devices:
-        with jax.default_device(cpu_devices[0]):
-            return jnp.asarray(array)
-    return jnp.asarray(array)
-
-
-def _resolve_cache_dir(cache_dir: str | Path | None, name: str) -> Path:
-    if cache_dir is not None:
-        base = Path(cache_dir)
-    else:
-        base = Path.home() / ".cache" / f"cyreal_{name}"
-    base.mkdir(parents=True, exist_ok=True)
-    return base
-
-
 def _ensure_csv(
     cache_dir: Path,
     filename: str,
@@ -46,11 +27,7 @@ def _ensure_csv(
     data_path: str | Path | None,
 ) -> Path:
     if data_path is not None:
-        source = Path(data_path)
-        target = cache_dir / filename
-        if source.resolve() != target.resolve():
-            shutil.copyfile(source, target)
-        return target
+        return Path(data_path)
     target = cache_dir / filename
     if not target.exists():
         urllib.request.urlretrieve(url, target)
@@ -129,7 +106,7 @@ def _prepare_windows(
     cache_dir: str | Path | None,
     data_path: str | Path | None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    base_dir = _resolve_cache_dir(cache_dir, dataset_name)
+    base_dir = resolve_cache_dir(cache_dir, default_name=f"cyreal_{dataset_name}")
     csv_path = _ensure_csv(base_dir, filename, url, data_path)
     values = _load_value_column(csv_path, skip_header=skip_header, value_column=value_column)
     split_values = _select_split(
@@ -177,10 +154,10 @@ def _make_sequence_disk_source(
         ordering=ordering,
         prefetch_size=prefetch_size,
     )
-
-
 @dataclass
-class _BaseSequenceDataset(DatasetProtocol):
+class DailyMinTemperaturesDataset(DatasetProtocol):
+    """Sliding-window dataset built from Bureau of Meteorology temperatures."""
+
     split: Literal["train", "test"] = "train"
     context_length: int = 30
     prediction_length: int = 1
@@ -188,21 +165,13 @@ class _BaseSequenceDataset(DatasetProtocol):
     cache_dir: str | Path | None = None
     data_path: str | Path | None = None
 
-    def _init_from_metadata(
-        self,
-        *,
-        dataset_name: str,
-        filename: str,
-        url: str,
-        skip_header: int,
-        value_column: int,
-    ) -> None:
+    def __post_init__(self) -> None:
         contexts, targets = _prepare_windows(
-            dataset_name=dataset_name,
-            filename=filename,
-            url=url,
-            value_column=value_column,
-            skip_header=skip_header,
+            dataset_name="daily_min_temperatures",
+            filename="daily-min-temperatures.csv",
+            url=DAILY_MIN_TEMPS_URL,
+            skip_header=1,
+            value_column=1,
             split=self.split,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
@@ -210,8 +179,6 @@ class _BaseSequenceDataset(DatasetProtocol):
             cache_dir=self.cache_dir,
             data_path=self.data_path,
         )
-        self._contexts_np = contexts
-        self._targets_np = targets
         self._contexts = _to_host_jax_array(contexts)
         self._targets = _to_host_jax_array(targets)
 
@@ -228,29 +195,24 @@ class _BaseSequenceDataset(DatasetProtocol):
         return {"context": self._contexts, "target": self._targets}
 
     @classmethod
-    def _make_disk_source(
+    def make_disk_source(
         cls,
         *,
-        dataset_name: str,
-        filename: str,
-        url: str,
-        skip_header: int,
-        value_column: int,
-        split: Literal["train", "test"],
-        context_length: int,
-        prediction_length: int,
-        train_fraction: float,
-        cache_dir: str | Path | None,
-        data_path: str | Path | None,
-        ordering: Literal["sequential", "shuffle"],
-        prefetch_size: int,
+        split: Literal["train", "test"] = "train",
+        context_length: int = 30,
+        prediction_length: int = 1,
+        train_fraction: float = 0.8,
+        cache_dir: str | Path | None = None,
+        data_path: str | Path | None = None,
+        ordering: Literal["sequential", "shuffle"] = "shuffle",
+        prefetch_size: int = 64,
     ) -> DiskSampleSource:
         contexts, targets = _prepare_windows(
-            dataset_name=dataset_name,
-            filename=filename,
-            url=url,
-            value_column=value_column,
-            skip_header=skip_header,
+            dataset_name="daily_min_temperatures",
+            filename="daily-min-temperatures.csv",
+            url=DAILY_MIN_TEMPS_URL,
+            skip_header=1,
+            value_column=1,
             split=split,
             context_length=context_length,
             prediction_length=prediction_length,
@@ -269,60 +231,44 @@ class _BaseSequenceDataset(DatasetProtocol):
 
 
 @dataclass
-class DailyMinTemperaturesDataset(_BaseSequenceDataset):
-    """Sliding-window dataset built from the Bureau of Meteorology temperatures."""
-
-    def __post_init__(self) -> None:
-        self._init_from_metadata(
-            dataset_name="daily_min_temperatures",
-            filename="daily-min-temperatures.csv",
-            url=DAILY_MIN_TEMPS_URL,
-            skip_header=1,
-            value_column=1,
-        )
-
-    @classmethod
-    def make_disk_source(
-        cls,
-        *,
-        split: Literal["train", "test"] = "train",
-        context_length: int = 30,
-        prediction_length: int = 1,
-        train_fraction: float = 0.8,
-        cache_dir: str | Path | None = None,
-        data_path: str | Path | None = None,
-        ordering: Literal["sequential", "shuffle"] = "shuffle",
-        prefetch_size: int = 64,
-    ) -> DiskSampleSource:
-        return cls._make_disk_source(
-            dataset_name="daily_min_temperatures",
-            filename="daily-min-temperatures.csv",
-            url=DAILY_MIN_TEMPS_URL,
-            skip_header=1,
-            value_column=1,
-            split=split,
-            context_length=context_length,
-            prediction_length=prediction_length,
-            train_fraction=train_fraction,
-            cache_dir=cache_dir,
-            data_path=data_path,
-            ordering=ordering,
-            prefetch_size=prefetch_size,
-        )
-
-
-@dataclass
-class SunspotsDataset(_BaseSequenceDataset):
+class SunspotsDataset(DatasetProtocol):
     """Monthly mean sunspot counts from SILSO."""
 
+    split: Literal["train", "test"] = "train"
+    context_length: int = 24
+    prediction_length: int = 1
+    train_fraction: float = 0.8
+    cache_dir: str | Path | None = None
+    data_path: str | Path | None = None
+
     def __post_init__(self) -> None:
-        self._init_from_metadata(
+        contexts, targets = _prepare_windows(
             dataset_name="sunspots",
             filename="monthly-sunspots.csv",
             url=SUNSPOTS_URL,
             skip_header=1,
             value_column=1,
+            split=self.split,
+            context_length=self.context_length,
+            prediction_length=self.prediction_length,
+            train_fraction=self.train_fraction,
+            cache_dir=self.cache_dir,
+            data_path=self.data_path,
         )
+        self._contexts = _to_host_jax_array(contexts)
+        self._targets = _to_host_jax_array(targets)
+
+    def __len__(self) -> int:
+        return int(self._contexts.shape[0])
+
+    def __getitem__(self, index: int):
+        return {
+            "context": self._contexts[index],
+            "target": self._targets[index],
+        }
+
+    def as_array_dict(self) -> dict[str, jax.Array]:
+        return {"context": self._contexts, "target": self._targets}
 
     @classmethod
     def make_disk_source(
@@ -337,7 +283,7 @@ class SunspotsDataset(_BaseSequenceDataset):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSampleSource:
-        return cls._make_disk_source(
+        contexts, targets = _prepare_windows(
             dataset_name="sunspots",
             filename="monthly-sunspots.csv",
             url=SUNSPOTS_URL,
@@ -349,6 +295,12 @@ class SunspotsDataset(_BaseSequenceDataset):
             train_fraction=train_fraction,
             cache_dir=cache_dir,
             data_path=data_path,
+        )
+        return _make_sequence_disk_source(
+            contexts=contexts,
+            targets=targets,
+            context_length=context_length,
+            prediction_length=prediction_length,
             ordering=ordering,
             prefetch_size=prefetch_size,
         )

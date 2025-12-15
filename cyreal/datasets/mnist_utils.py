@@ -4,28 +4,9 @@ from __future__ import annotations
 import gzip
 import shutil
 import struct
-import urllib.request
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
 import numpy as np
-
-
-def to_host_jax_array(array: np.ndarray) -> jax.Array:
-    cpu_devices = jax.devices("cpu")
-    if cpu_devices:
-        with jax.default_device(cpu_devices[0]):
-            return jnp.asarray(array)
-    return jnp.asarray(array)
-
-
-def ensure_file(path: Path, url: str) -> Path:
-    if path.exists():
-        return path
-    path.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(url, path)
-    return path
 
 
 def read_idx_images(path: Path) -> np.ndarray:

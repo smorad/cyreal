@@ -11,14 +11,17 @@ import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
 from ..sources import DiskSampleSource
-from ._mnist_like import (
+from .fs_utils import (
     ensure_file as _ensure_file,
+    resolve_cache_dir,
+    to_host_jax_array as _to_host_jax_array,
+)
+from .mnist_utils import (
     ensure_uncompressed_idx as _ensure_uncompressed_idx,
     read_image_header as _read_image_header,
     read_idx_images as _read_idx_images,
     read_idx_labels as _read_idx_labels,
     read_label_header as _read_label_header,
-    to_host_jax_array as _to_host_jax_array,
 )
 
 KMNIST_URLS = {
@@ -37,15 +40,10 @@ class KMNISTDataset(DatasetProtocol):
     cache_dir: str | Path | None = None
 
     def __post_init__(self) -> None:
-        base_dir = (
-            Path(self.cache_dir)
-            if self.cache_dir is not None
-            else Path.home() / ".cache" / "kmnist"
-        )
+        base_dir = resolve_cache_dir(self.cache_dir, default_name="kmnist")
         self.cache_dir = base_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        images_file = self.cache_dir / f"{self.split}_images.gz"
-        labels_file = self.cache_dir / f"{self.split}_labels.gz"
+        images_file = base_dir / f"{self.split}_images.gz"
+        labels_file = base_dir / f"{self.split}_labels.gz"
 
         _ensure_file(images_file, KMNIST_URLS[f"{self.split}_images"])
         _ensure_file(labels_file, KMNIST_URLS[f"{self.split}_labels"])
@@ -80,12 +78,7 @@ class KMNISTDataset(DatasetProtocol):
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
     ) -> DiskSampleSource:
-        base_dir = (
-            Path(cache_dir)
-            if cache_dir is not None
-            else Path.home() / ".cache" / "kmnist"
-        )
-        base_dir.mkdir(parents=True, exist_ok=True)
+        base_dir = resolve_cache_dir(cache_dir, default_name="kmnist")
 
         images_gz = base_dir / f"{split}_images.gz"
         labels_gz = base_dir / f"{split}_labels.gz"
