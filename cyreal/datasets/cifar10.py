@@ -27,7 +27,7 @@ def _to_host_jax_array(array: np.ndarray) -> jax.Array:
 
 
 def _resolve_cache_dir(cache_dir: str | Path | None) -> Path:
-    base_dir = Path(cache_dir) if cache_dir is not None else Path.home() / ".cache" / "cereal_cifar10"
+    base_dir = Path(cache_dir) if cache_dir is not None else Path.home() / ".cache" / "cyreal_cifar10"
     base_dir.mkdir(parents=True, exist_ok=True)
     return base_dir
 

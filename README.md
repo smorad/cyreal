@@ -1,6 +1,6 @@
-# Cereal - Another JAX DataLoader 
+# Cyreal - Another JAX DataLoader 
 
-> `grain` for the corporations, `cereal` for the people
+> `grain` for the corporations, `cyreal` for the people
 
 Pure `jax` utilities for iterating over finite datasets without ever touching `torch` or `tensorflow`. Dataloaders support `jax.jit`, `jax.grad`, `jax.lax.scan`, and other function transformations.
 
@@ -16,7 +16,7 @@ Write `torch`-style dataloaders without `torch`
 import jax
 import jax.numpy as jnp
 
-from cereal import (
+from cyreal import (
   ArraySampleSource,
   BatchTransform,
   DataLoader,
@@ -58,7 +58,7 @@ Do you enjoy premature optimization? Why not `jit` the entire train epoch?
 import jax
 import jax.numpy as jnp
 
-from cereal import (
+from cyreal import (
   ArraySampleSource,
   BatchTransform,
   DataLoader,
@@ -96,7 +96,7 @@ Is your dataset enormous? Swap in a disk-backed source.
 ```python
 import jax
 
-from cereal import (
+from cyreal import (
   BatchTransform,
   DataLoader,
   DevicePutTransform,
@@ -123,7 +123,7 @@ Want to `jit` but also log some metrics? Use `HostCallbackTransform` which utili
 import jax.numpy as jnp
 import numpy as np
 
-from cereal import (
+from cyreal import (
   ArraySampleSource,
   BatchTransform,
   DataLoader,

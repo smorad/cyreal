@@ -7,7 +7,7 @@ from setuptools import find_packages, setup
 README = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 
 setup(
-    name="cereal",
+    name="cyreal",
     version="0.1.0",
     description="Jittable data loading utilities for JAX.",
     long_description=README,

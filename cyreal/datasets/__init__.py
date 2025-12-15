@@ -1,4 +1,4 @@
-"""Dataset helpers bundled with cereal."""
+"""Dataset helpers bundled with cyreal."""
 from __future__ import annotations
 
 from .cifar10 import CIFAR10Dataset, CIFAR10DiskSource

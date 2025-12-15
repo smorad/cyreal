@@ -1,4 +1,4 @@
-"""Train a simple MNIST classifier with Equinox and Cereal.
+"""Train a simple MNIST classifier with Equinox and cyreal.
 
 Usage:
   python examples/mnist_equinox.py --epochs 3 --batch-size 256 --learning-rate 3e-4
@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import optax
 import tqdm
 
-from cereal import ArraySampleSource, BatchTransform, DataLoader, DevicePutTransform, MNISTDataset, FlattenTransform
+from cyreal import ArraySampleSource, BatchTransform, DataLoader, DevicePutTransform, MNISTDataset, FlattenTransform
 
 Batch = dict[str, jax.Array]
 

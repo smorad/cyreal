@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from cereal import (
+from cyreal import (
     ArraySampleSource,
     BatchTransform,
     CIFAR10Dataset,
