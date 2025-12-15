@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
-from ..sources import DiskSampleSource
+from ..sources import DiskSource
 from .utils import (
     download_archive,
     ensure_tar_extracted,
@@ -96,7 +96,7 @@ class CIFAR100Dataset(DatasetProtocol):
         cache_dir: str | Path | None = None,
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
-    ) -> DiskSampleSource:
+    ) -> DiskSource:
         base_dir = resolve_cache_dir(cache_dir, default_name="cifar100")
         archive_path = base_dir / "cifar-100-python.tar.gz"
         download_archive(CIFAR100_URL, archive_path)
@@ -130,7 +130,7 @@ class CIFAR100Dataset(DatasetProtocol):
             "coarse_label": jax.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
         }
 
-        return DiskSampleSource(
+        return DiskSource(
             length=int(images_memmap.shape[0]),
             sample_fn=_read_sample,
             sample_spec=sample_spec,

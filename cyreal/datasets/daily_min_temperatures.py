@@ -7,7 +7,7 @@ from typing import Literal
 import jax
 
 from ..dataset_protocol import DatasetProtocol
-from ..sources import DiskSampleSource
+from ..sources import DiskSource
 from .time_utils import make_sequence_disk_source, prepare_time_windows
 from .utils import to_host_jax_array as _to_host_jax_array
 
@@ -68,7 +68,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
         data_path: str | None = None,
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
-    ) -> DiskSampleSource:
+    ) -> DiskSource:
         contexts, targets = prepare_time_windows(
             dataset_name="daily_min_temperatures",
             filename="daily-min-temperatures.csv",

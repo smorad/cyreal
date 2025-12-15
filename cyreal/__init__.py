@@ -14,7 +14,7 @@ from .loader import (
     DataLoader,
     LoaderState,
 )
-from .sources import ArraySource, DiskSampleSource, GymnaxSource, Source
+from .sources import ArraySource, DiskSource, GymnaxSource, Source
 from .transforms import (
     BatchTransform,
     DevicePutTransform,
@@ -37,7 +37,7 @@ __all__ = [
     "Kuzushiji49Dataset",
     "MNISTDataset",
     "ArraySource",
-    "DiskSampleSource",
+    "DiskSource",
     "GymnaxSource",
     "VectorGymnaxSource",
     "Source",

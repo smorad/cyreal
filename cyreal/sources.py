@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Protocol
+from typing import Any, Callable, Literal, Protocol, TypeVar
 
 import jax
 import jax.numpy as jnp
@@ -11,20 +11,48 @@ from jax import tree_util
 from jax.experimental import io_callback
 
 PyTree = Any
+StateT = TypeVar("StateT")
 
 
-class Source(Protocol):
-    """Protocol for stateful, JIT-friendly data streams."""
+class Source(Protocol[StateT]):
+    """Interface for stateful, JIT-friendly data streams.
+
+    A source exposes fixed-length epochs (`steps_per_epoch`) and provides
+    methods for initializing internal state and iteratively producing samples
+    plus boolean masks that denote whether a sample is valid (e.g. under
+    padding).
+    """
 
     steps_per_epoch: int
 
-    def init_state(self, key: jax.Array | None = None):
+    def init_state(self, key: jax.Array | None = None) -> StateT:
+        """Return an initial state for the source.
+
+        Args:
+            key: Optional PRNG key used for randomized behavior such as
+                shuffling. Implementations should fall back to a default key
+                when ``None`` is provided.
+
+        Returns:
+            Backend-specific state object that must be passed to ``next``.
+        """
         ...
 
-    def next(self, state):
-        """Return (value, mask, new_state)."""
+    def next(self, state: StateT) -> tuple[PyTree, jax.Array, StateT]:
+        """Advance the stream and return the next value.
+
+        Args:
+            state: Previously-initialized source state.
+
+        Returns:
+            Tuple ``(value, mask, new_state)`` where ``value`` is a PyTree of
+            arrays, ``mask`` is a boolean array indicating whether the sample
+            is valid, and ``new_state`` should be provided to the next call.
+        """
+        ...
 
     def element_spec(self) -> PyTree:
+        """PyTree of :class:`jax.ShapeDtypeStruct` describing emitted samples."""
         ...
 
 
@@ -93,16 +121,13 @@ class DiskSourceState:
 
 
 @dataclass
-class ArraySource:
+class ArraySource(Source[ArraySourceState]):
     """Sample-level stream over an in-memory PyTree of arrays.
-    
-    This loads the entire dataset into memory as a PyTree of JAX arrays. 
-    
-    Args:
-        data: PyTree of arrays with leading dimension as sample axis.
-        ordering: Sample ordering strategy, either 'sequential' or 'shuffle'. Applied to the entire array.
-    """
 
+    Args:
+        data: PyTree whose leaves are arrays with a leading sample dimension.
+        ordering: Either ``"sequential"`` or ``"shuffle"``.
+    """
 
     data: PyTree
     ordering: Literal["sequential", "shuffle"] = "shuffle"
@@ -132,6 +157,7 @@ class ArraySource:
         return self._num_samples
 
     def element_spec(self) -> PyTree:
+        """Shape/dtype metadata describing samples produced by the source."""
         return self._element_spec
 
     def _build_epoch_indices(self, key: jax.Array) -> tuple[jax.Array, jax.Array]:
@@ -143,14 +169,23 @@ class ArraySource:
 
         return base, self._mask_template
 
-    def init_state(self, key: jax.Array) -> ArraySourceState:
+    def init_state(self, key: jax.Array | None = None) -> ArraySourceState:
+        """Create the initial iteration state.
+
+        Args:
+            key: Optional PRNG key. Defaults to ``jax.random.PRNGKey(0)`` when
+                omitted.
+        """
+        if key is None:
+            key = jax.random.PRNGKey(0)
         key, perm_key = jax.random.split(key)
         indices, mask = self._build_epoch_indices(perm_key)
         position = jnp.array(0, dtype=jnp.int32)
         epoch = jnp.array(0, dtype=jnp.int32)
         return ArraySourceState(indices=indices, mask=mask, position=position, key=key, epoch=epoch)
 
-    def next(self, state: ArraySourceState):
+    def next(self, state: ArraySourceState) -> tuple[PyTree, jax.Array, ArraySourceState]:
+        """Return the next sample (with mask) and the advanced state."""
         index = jax.lax.dynamic_index_in_dim(state.indices, state.position, axis=0, keepdims=False)
         mask_value = jax.lax.dynamic_index_in_dim(state.mask, state.position, axis=0, keepdims=False)
         sample = tree_util.tree_map(
@@ -186,7 +221,7 @@ class ArraySource:
 
 
 @dataclass
-class DiskSampleSource(Source):
+class DiskSource(Source[DiskSourceState]):
     """Sample-level stream that loads items via a Python callback (disk, RPC, etc.).
 
     Use this if your dataset will not fit in system memory.
@@ -250,6 +285,7 @@ class DiskSampleSource(Source):
         )
 
     def element_spec(self) -> PyTree:
+        """Shape/dtype metadata describing samples produced by the source."""
         return self._element_spec
 
     def _build_epoch_indices(self, key: jax.Array) -> jax.Array:
@@ -261,6 +297,7 @@ class DiskSampleSource(Source):
         return base
 
     def init_state(self, key: jax.Array | None = None) -> DiskSourceState:
+        """Build the starting state, optionally seeding randomness with ``key``."""
         if key is None:
             key = jax.random.PRNGKey(0)
         key, perm_key = jax.random.split(key)
@@ -339,7 +376,8 @@ class DiskSampleSource(Source):
 
         return jax.lax.cond(_needs(state), _refill, lambda s: s, state)
 
-    def next(self, state: DiskSourceState):
+    def next(self, state: DiskSourceState) -> tuple[PyTree, jax.Array, DiskSourceState]:
+        """Return buffered sample, all-True mask, and updated state."""
         state = self._maybe_refill_buffer(state)
         sample = tree_util.tree_map(
             lambda buf: jax.lax.dynamic_index_in_dim(
@@ -399,7 +437,7 @@ class GymnaxSourceState:
 
 
 @dataclass
-class GymnaxSource(Source):
+class GymnaxSource(Source[GymnaxSourceState]):
     """Stream transitions by rolling out a Gymnax environment with a policy.
     
     Useful for reinforcement learning.
@@ -460,9 +498,11 @@ class GymnaxSource(Source):
         self.policy_state_template = None
 
     def element_spec(self) -> PyTree:
+        """Shape/dtype metadata describing Gymnax transitions."""
         return self._element_spec
 
     def init_state(self, key: jax.Array | None = None) -> GymnaxSourceState:
+        """Return RNG-seeded environment + policy state for iteration."""
         if key is None:
             key = jax.random.PRNGKey(0)
         key, env_key = jax.random.split(key)
@@ -477,7 +517,8 @@ class GymnaxSource(Source):
             new_episode=jnp.array(True, dtype=jnp.bool_),
         )
 
-    def next(self, state: GymnaxSourceState):
+    def next(self, state: GymnaxSourceState) -> tuple[PyTree, jax.Array, GymnaxSourceState]:
+        """Roll the environment forward one step and emit a transition."""
         key, policy_key, step_key, done_reset_key, epoch_reset_key = jax.random.split(state.key, 5)
 
         if state.policy_state is None:

@@ -11,7 +11,7 @@ from cyreal import (
     BatchTransform,
     DataLoader,
     DevicePutTransform,
-    DiskSampleSource,
+    DiskSource,
     FlattenTransform,
     GymnaxSource,
     HostCallbackTransform,
@@ -313,7 +313,7 @@ def test_disk_sample_source_streams_via_callback():
         return {"value": np.array(samples[idx]["value"], dtype=np.int32)}
 
     spec = {"value": jax.ShapeDtypeStruct(shape=(), dtype=jnp.int32)}
-    source = DiskSampleSource(
+    source = DiskSource(
         length=len(samples),
         sample_fn=sample_fn,
         sample_spec=spec,
@@ -348,7 +348,7 @@ def test_disk_sample_source_infers_spec_when_missing():
     def sample_fn(idx: int):
         return {"value": np.array(samples[idx]["value"], dtype=np.float32)}
 
-    source = DiskSampleSource(
+    source = DiskSource(
         length=len(samples),
         sample_fn=sample_fn,
         ordering="sequential",

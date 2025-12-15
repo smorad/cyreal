@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..dataset_protocol import DatasetProtocol
-from ..sources import DiskSampleSource
+from ..sources import DiskSource
 from .utils import (
     ensure_file as _ensure_file,
     resolve_cache_dir,
@@ -79,7 +79,7 @@ class FashionMNISTDataset(DatasetProtocol):
         cache_dir: str | Path | None = None,
         ordering: Literal["sequential", "shuffle"] = "shuffle",
         prefetch_size: int = 64,
-    ) -> DiskSampleSource:
+    ) -> DiskSource:
         base_dir = resolve_cache_dir(cache_dir, default_name="fashion_mnist")
 
         images_gz = base_dir / f"{split}_images.gz"
@@ -121,7 +121,7 @@ class FashionMNISTDataset(DatasetProtocol):
             "label": jax.ShapeDtypeStruct(shape=(), dtype=jnp.int32),
         }
 
-        return DiskSampleSource(
+        return DiskSource(
             length=int(num_images),
             sample_fn=_read_sample,
             sample_spec=sample_spec,

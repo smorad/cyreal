@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..sources import DiskSampleSource
+from ..sources import DiskSource
 from .utils import ensure_csv, resolve_cache_dir
 
 
@@ -108,7 +108,7 @@ def make_sequence_disk_source(
     prediction_length: int,
     ordering: Literal["sequential", "shuffle"],
     prefetch_size: int,
-) -> DiskSampleSource:
+) -> DiskSource:
     contexts_np = np.array(contexts, copy=True)
     targets_np = np.array(targets, copy=True)
 
@@ -124,7 +124,7 @@ def make_sequence_disk_source(
         "target": jax.ShapeDtypeStruct(shape=(prediction_length,), dtype=jnp.float32),
     }
 
-    return DiskSampleSource(
+    return DiskSource(
         length=int(contexts_np.shape[0]),
         sample_fn=_read_sample,
         sample_spec=sample_spec,
