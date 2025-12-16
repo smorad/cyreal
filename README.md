@@ -50,7 +50,7 @@ for epoch in range(2):
         ... # Train your network
 ```
 
-For maximum throughput, `jit` an entire training epoch, fusing together loads of operations
+Use `scan_epoch` to `jit` and avoid boilerplate
 
 ```python
 model_state = {"params": jnp.array(0)}
