@@ -25,7 +25,7 @@ class Source(Protocol[StateT]):
 
     steps_per_epoch: int
 
-    def init_state(self, key: jax.Array | None = None) -> StateT:
+    def init_state(self, key: jax.Array) -> StateT:
         """Return an initial state for the source.
 
         Args:
@@ -169,15 +169,13 @@ class ArraySource(Source[ArraySourceState]):
 
         return base, self._mask_template
 
-    def init_state(self, key: jax.Array | None = None) -> ArraySourceState:
+    def init_state(self, key: jax.Array) -> ArraySourceState:
         """Create the initial iteration state.
 
         Args:
             key: Optional PRNG key. Defaults to ``jax.random.PRNGKey(0)`` when
                 omitted.
         """
-        if key is None:
-            key = jax.random.PRNGKey(0)
         key, perm_key = jax.random.split(key)
         indices, mask = self._build_epoch_indices(perm_key)
         position = jnp.array(0, dtype=jnp.int32)
@@ -296,10 +294,8 @@ class DiskSource(Source[DiskSourceState]):
             raise ValueError(f"Unknown ordering '{self.ordering}'.")
         return base
 
-    def init_state(self, key: jax.Array | None = None) -> DiskSourceState:
+    def init_state(self, key: jax.Array) -> DiskSourceState:
         """Build the starting state, optionally seeding randomness with ``key``."""
-        if key is None:
-            key = jax.random.PRNGKey(0)
         key, perm_key = jax.random.split(key)
         indices = self._build_epoch_indices(perm_key)
         position = jnp.array(0, dtype=jnp.int32)
@@ -501,10 +497,8 @@ class GymnaxSource(Source[GymnaxSourceState]):
         """Shape/dtype metadata describing Gymnax transitions."""
         return self._element_spec
 
-    def init_state(self, key: jax.Array | None = None) -> GymnaxSourceState:
+    def init_state(self, key: jax.Array) -> GymnaxSourceState:
         """Return RNG-seeded environment + policy state for iteration."""
-        if key is None:
-            key = jax.random.PRNGKey(0)
         key, env_key = jax.random.split(key)
         obs, env_state = self.env.reset(env_key, self.env_params)
         return GymnaxSourceState(

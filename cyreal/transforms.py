@@ -26,6 +26,14 @@ def _zeros_from_spec(spec_tree: PyTree, batch_size: int):
     return tree_util.tree_map(_make, spec_tree)
 
 
+def _write_buffer_impl(buffer: PyTree, value: PyTree, index: jax.Array) -> PyTree:
+    def _update(buf, val):
+        val_expanded = jnp.expand_dims(val, axis=0)
+        return jax.lax.dynamic_update_index_in_dim(buf, val_expanded, index, axis=0)
+
+    return tree_util.tree_map(_update, buffer, value)
+
+
 class SourceTransform(Source, Protocol):
     inner: Source
 
@@ -113,7 +121,7 @@ class _BatchTransformSource(SourceTransform):
     def element_spec(self) -> PyTree:
         return self._element_spec
 
-    def init_state(self, key: jax.Array | None = None) -> BatchTransformState:
+    def init_state(self, key: jax.Array) -> BatchTransformState:
         return BatchTransformState(
             inner_state=self.inner.init_state(key),
             position_in_epoch=jnp.array(0, dtype=jnp.int32),
@@ -196,6 +204,304 @@ class _BatchTransformSource(SourceTransform):
             inner_state=inner_state,
             position_in_epoch=wrapped_position,
         )
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class BufferState:
+    inner_state: Any
+    buffer: PyTree
+    count: jax.Array
+    write_index: jax.Array
+    read_index: jax.Array
+    seen: jax.Array
+    rng: jax.Array
+
+    def tree_flatten(self):
+        buffer_leaves, buffer_def = tree_util.tree_flatten(self.buffer)
+        children = (
+            self.inner_state,
+            *buffer_leaves,
+            self.count,
+            self.write_index,
+            self.read_index,
+            self.seen,
+            self.rng,
+        )
+        return children, buffer_def
+
+    @classmethod
+    def tree_unflatten(cls, buffer_def, children):
+        inner_state = children[0]
+        leaf_count = buffer_def.num_leaves if buffer_def is not None else 0
+        buffer_leaves = children[1 : 1 + leaf_count]
+        buffer = (
+            tree_util.tree_unflatten(buffer_def, buffer_leaves)
+            if buffer_def is not None
+            else None
+        )
+        count, write_index, read_index, seen, rng = children[1 + leaf_count :]
+        return cls(
+            inner_state=inner_state,
+            buffer=buffer,
+            count=count,
+            write_index=write_index,
+            read_index=read_index,
+            seen=seen,
+            rng=rng,
+        )
+
+
+@dataclass
+class BufferTransform:
+    """Cache streaming samples for later randomized replay.
+
+    This transform stores scalar samples emitted by ``inner`` and, once the
+    buffer is "prefilled", serves elements from the cache.
+    The elements can be consumed directly, or batching/minibatching can 
+    be handled by ``BatchTransform`` or similar
+    utilities placed after the buffer in the pipeline.
+
+    Args:
+        capacity: Maximum number of samples to store.
+        prefill: Number of valid samples to observe before consuming from
+            the buffer. Defaults to ``capacity`` so replay starts after the
+            cache is full.
+        sample_size: Number of buffered samples emitted per ``next`` call.
+        mode: ``"sequential"`` iterates through the buffer in order, while
+            ``"shuffled"`` draws uniform random indices each step.
+        write_mode: ``"fifo"`` behaves like a ring buffer, ``"reservoir"``
+            performs uniform replacement akin to reservoir sampling once the
+            buffer is full.
+    """
+
+    capacity: int
+    prefill: int 
+    sample_size: int = 1
+    mode: Literal["sequential", "shuffled"] = "sequential"
+    write_mode: Literal["fifo", "reservoir"] = "fifo"
+
+    def __call__(self, inner: Source) -> Source:
+        return _BufferTransformSource(
+            inner=inner,
+            capacity=self.capacity,
+            prefill=self.prefill,
+            sample_size=self.sample_size,
+            mode=self.mode,
+            write_mode=self.write_mode,
+        )
+
+
+@dataclass
+class _BufferTransformSource(SourceTransform):
+    inner: Source
+    capacity: int
+    prefill: int 
+    sample_size: int
+    mode: Literal["sequential", "shuffled"]
+    write_mode: Literal["fifo", "reservoir"]
+
+    def __post_init__(self) -> None:
+        if self.capacity <= 0:
+            raise ValueError("capacity must be positive.")
+        self._capacity = int(self.capacity)
+        self._warmup = int(self.prefill)
+        if self._warmup <= 0:
+            raise ValueError("prefill must be positive.")
+        if self._warmup > self._capacity:
+            raise ValueError("prefill cannot exceed capacity.")
+        self._sample_size = int(self.sample_size)
+        if self._sample_size <= 0:
+            raise ValueError("sample_size must be positive.")
+        if self._sample_size > self._capacity:
+            raise ValueError("sample_size cannot exceed capacity.")
+        if self._warmup < self._sample_size:
+            raise ValueError("prefill must be at least sample_size.")
+        if self.mode not in ("sequential", "shuffled"):
+            raise ValueError("mode must be either 'sequential' or 'shuffled'.")
+        self._mode = self.mode
+        self._mode_is_sequential = self._mode == "sequential"
+        if self.write_mode not in ("fifo", "reservoir"):
+            raise ValueError("write_mode must be either 'fifo' or 'reservoir'.")
+        self._write_mode_is_fifo = self.write_mode == "fifo"
+
+        self.steps_per_epoch = self.inner.steps_per_epoch
+        spec = self.inner.element_spec()
+        leaves = tree_util.tree_leaves(spec)
+        if not leaves:
+            raise ValueError("BufferTransform requires at least one spec leaf.")
+        for leaf in leaves:
+            if not isinstance(leaf, jax.ShapeDtypeStruct):
+                raise TypeError("element_spec leaves must be jax.ShapeDtypeStruct instances.")
+        if self._sample_size == 1:
+            self._element_spec = spec
+        else:
+            self._element_spec = tree_util.tree_map(
+                lambda leaf: jax.ShapeDtypeStruct(
+                    shape=(self._sample_size, *leaf.shape),
+                    dtype=leaf.dtype,
+                ),
+                spec,
+            )
+        self._buffer_template = tree_util.tree_map(
+            lambda leaf: jnp.zeros((self._capacity, *leaf.shape), dtype=leaf.dtype),
+            spec,
+        )
+        self._chunk_template = tree_util.tree_map(
+            lambda leaf: jnp.zeros((self._sample_size, *leaf.shape), dtype=leaf.dtype),
+            spec,
+        )
+        self._mask_template = jnp.zeros(self._sample_size, dtype=jnp.bool_)
+        self._write_buffer = jax.jit(_write_buffer_impl, donate_argnums=(0,))
+
+    def element_spec(self) -> PyTree:
+        return self._element_spec
+
+    def init_state(self, key: jax.Array | None = None) -> BufferState:
+        if key is None:
+            key = jax.random.PRNGKey(0)
+        inner_state = self.inner.init_state(key)
+        rng = jax.random.fold_in(key, 1)
+        return BufferState(
+            inner_state=inner_state,
+            buffer=self._buffer_template,
+            count=jnp.array(0, dtype=jnp.int32),
+            write_index=jnp.array(0, dtype=jnp.int32),
+            read_index=jnp.array(0, dtype=jnp.int32),
+            seen=jnp.array(0, dtype=jnp.int32),
+            rng=rng,
+        )
+
+    def _gather_many(self, buffer: PyTree, indices: jax.Array) -> PyTree:
+        def gather_leaf(buf):
+            return jax.vmap(
+                lambda idx: jax.lax.dynamic_index_in_dim(buf, idx, axis=0, keepdims=False)
+            )(indices)
+
+        return tree_util.tree_map(gather_leaf, buffer)
+
+    def _format_chunk(self, chunk: PyTree) -> PyTree:
+        if self._sample_size == 1:
+            return tree_util.tree_map(lambda arr: jnp.squeeze(arr, axis=0), chunk)
+        return chunk
+
+    def _format_mask(self, mask: jax.Array) -> jax.Array:
+        if self._sample_size == 1:
+            return mask[0]
+        return mask
+
+    def next(self, state: BufferState):
+        value, mask, inner_state = self.inner.next(state.inner_state)
+        mask_scalar = jnp.all(jnp.asarray(mask, dtype=jnp.bool_))
+
+        one = jnp.array(1, dtype=jnp.int32)
+        zero = jnp.array(0, dtype=jnp.int32)
+        increment = jnp.where(mask_scalar, one, zero)
+        rng, write_key, sample_key = jax.random.split(state.rng, 3)
+        new_seen = state.seen + increment
+
+        def _write(_: None):
+            def _fifo(_: None):
+                buffer = self._write_buffer(state.buffer, value, state.write_index)
+                next_write = (state.write_index + 1) % self._capacity
+                return buffer, next_write, jnp.array(True, dtype=jnp.bool_)
+
+            def _reservoir(_: None):
+                def _fill(_: None):
+                    buffer = self._write_buffer(state.buffer, value, state.write_index)
+                    next_write = (state.write_index + 1) % self._capacity
+                    return buffer, next_write, jnp.array(True, dtype=jnp.bool_)
+
+                def _replace(_: None):
+                    maxval = jnp.maximum(new_seen, one)
+                    rand_idx = jax.random.randint(write_key, (), minval=0, maxval=maxval)
+
+                    def _commit(_: None):
+                        buffer = self._write_buffer(state.buffer, value, rand_idx)
+                        return buffer, state.write_index, jnp.array(True, dtype=jnp.bool_)
+
+                    def _skip(_: None):
+                        return state.buffer, state.write_index, jnp.array(False, dtype=jnp.bool_)
+
+                    return jax.lax.cond(rand_idx < self._capacity, _commit, _skip, operand=None)
+
+                return jax.lax.cond(state.count < self._capacity, _fill, _replace, operand=None)
+
+            return jax.lax.cond(self._write_mode_is_fifo, _fifo, _reservoir, operand=None)
+
+        def _skip(_: None):
+            return state.buffer, state.write_index, jnp.array(False, dtype=jnp.bool_)
+
+        updated_buffer, new_write, wrote_sample = jax.lax.cond(
+            mask_scalar,
+            _write,
+            _skip,
+            operand=None,
+        )
+
+        new_count = jnp.minimum(
+            state.count
+            + jnp.where(wrote_sample, one, zero),
+            jnp.array(self._capacity, dtype=jnp.int32),
+        )
+
+        buffer_ready = state.count >= self._warmup
+
+        def _from_buffer(_: None):
+            def _sequential(_: None):
+                idxs = (
+                    state.read_index
+                    + jnp.arange(self._sample_size, dtype=jnp.int32)
+                ) % jnp.maximum(new_count, one)
+                chunk = self._gather_many(updated_buffer, idxs)
+                mask_vec = jnp.ones(self._sample_size, dtype=jnp.bool_)
+                next_read = (
+                    state.read_index + jnp.array(self._sample_size, dtype=jnp.int32)
+                ) % jnp.maximum(new_count, one)
+                return chunk, mask_vec, next_read
+
+            def _shuffled(_: None):
+                idxs = jax.random.randint(
+                    sample_key,
+                    (self._sample_size,),
+                    minval=0,
+                    maxval=jnp.maximum(new_count, one),
+                )
+                chunk = self._gather_many(updated_buffer, idxs)
+                mask_vec = jnp.ones(self._sample_size, dtype=jnp.bool_)
+                return chunk, mask_vec, state.read_index
+
+            return jax.lax.cond(self._mode_is_sequential, _sequential, _shuffled, operand=None)
+
+        def _passthrough(_: None):
+            chunk = tree_util.tree_map(
+                lambda template, val: template.at[0].set(val),
+                self._chunk_template,
+                value,
+            )
+            mask_vec = self._mask_template.at[0].set(mask_scalar)
+            return chunk, mask_vec, state.read_index
+
+        chunk, mask_vec, next_read_index = jax.lax.cond(
+            buffer_ready,
+            _from_buffer,
+            _passthrough,
+            operand=None,
+        )
+
+        formatted_chunk = self._format_chunk(chunk)
+        formatted_mask = self._format_mask(mask_vec)
+
+        next_state = BufferState(
+            inner_state=inner_state,
+            buffer=updated_buffer,
+            count=new_count,
+            write_index=new_write,
+            read_index=next_read_index,
+            seen=new_seen,
+            rng=rng,
+        )
+        return formatted_chunk, formatted_mask, next_state
 
 
 @dataclass

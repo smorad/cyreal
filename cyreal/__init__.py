@@ -22,6 +22,7 @@ from .transforms import (
     HostCallbackTransform,
     MapTransform,
     NormalizeImageTransform,
+    BufferTransform,
     TimeSeriesBatchTransform,
 )
 
@@ -47,5 +48,6 @@ __all__ = [
     "HostCallbackTransform",
     "MapTransform",
     "NormalizeImageTransform",
+    "BufferTransform",
     "TimeSeriesBatchTransform",
 ]
