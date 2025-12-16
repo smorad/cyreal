@@ -8,7 +8,7 @@ README = (Path(__file__).parent / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="cyreal",
-    version="0.1.4",
+    version="0.1.5",
     description="Jittable data loading utilities for JAX.",
     long_description=README,
     long_description_content_type="text/markdown",
