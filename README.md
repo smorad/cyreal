@@ -93,7 +93,7 @@ You can compare the speed to the `grain` dataloader using [this script](cyreal/e
 |`cyreal`|CPU|GPU| `scan_epoch`| 4.00
 |`cyreal`|GPU|GPU| `scan_epoch`| 4.35
 
-### RTX 4090
+### RTX 5090
 
 |Library|Dataset Device|Batch Device|Method|Time (s)|
 |---|---|---|---|---|
