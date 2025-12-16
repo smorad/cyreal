@@ -62,7 +62,7 @@ See our [documentation](https://smorad.github.io/cyreal/cyreal.html) for more ex
 - For the dirty and impure, we support [logging metrics from within a `jit`ted loader.](https://smorad.github.io/cyreal/cyreal/tutorials/host_callback.html)
 - Got yourself a huge dataset? [Stream from a disk-backed source.](https://smorad.github.io/cyreal/cyreal/tutorials/disk_stream.html)
 - Afraid of finite datasets? We provide [`gymnax`-backed data sources for online reinforcement learning.](https://smorad.github.io/cyreal/cyreal/tutorials/rl_quickstart.html)
-- Are you a starving researcher/temporarily embarrassed hyperscaler? We support continual learning via [reservoir sampling and replay buffers.](https://smorad.github.io/cyreal/cyreal/tutorials/buffer_quickstart.html)
+- Starving researcher/temporarily embarrassed hyperscaler? We support continual learning via [reservoir sampling and replay buffers.](https://smorad.github.io/cyreal/cyreal/tutorials/buffer_quickstart.html)
 
 We also provide full end to end training examples
 - [MNIST](examples/mnist_equinox.py)
@@ -70,15 +70,15 @@ We also provide full end to end training examples
 - [Reinforcement Learning](examples/cartpole_pg.py)
 
 ## Speed Test
-You can compare the speed to the `grain` dataloader using [this script](cyreal/examples/speed_test.py). This is how long it to iterate though one epoch of MNIST
+You can compare the speed to the `grain` dataloader using [this script](cyreal/examples/speed_test.py). This is how long it takes to iterate though one epoch of MNIST
 
 ### MacBook M4 Pro
 
 |Library|Dataset Device|Batch Device|Method|Time (s)|
 |---|---|---|---|---|
 |`grain`|CPU|CPU| Iterator| 1.33
-|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.045
-|`cyreal`|CPU|CPU| `scan_epoch`| 0.095
+|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.04
+|`cyreal`|CPU|CPU| `scan_epoch`| 0.09
 
 ### A40 with Wimpy CPU
 
