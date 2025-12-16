@@ -15,7 +15,10 @@ pipeline = [
     # We have a lot of options for the BufferTransform
     # You can use it for either reservoir sampling or FIFO buffering
     # Prefill determines how many samples to wait before yielding batches
-    BufferTransform(capacity=128, prefill=16, sample_size=8, mode="shuffled", write_mode="reservoir"),
+    BufferTransform(capacity=128, prefill=16, sample_size=16, mode="shuffled", write_mode="reservoir"),
+    # BufferTransform yields 16 samples, and we can perform additional subsampling with
+    # BatchTransform if necessary
+    BatchTransform(batch_size=8),
     DevicePutTransform(),
 ]
 loader = DataLoader(pipeline)
