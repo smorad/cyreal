@@ -46,10 +46,12 @@ loader = DataLoader(pipeline)
 state = loader.init_state(jax.random.key(0))
 state = set_loader_policy_state(state, policy_state)
 
-# Perform one epoch of training
-for batch, mask in loader.iterate(state):
-    # Update the policy state (parameters) after each epoch
-    policy_state.update({"params": jnp.ones((4, 2))})
-    state = set_loader_policy_state(state, policy_state)
+# Perform training
+for epoch in range(2):
+    for _ in range(loader.steps_per_epoch):
+        batch, state, mask = jax.jit(loader.next)(state)
+        # Update the rollout policy parameters after each policy update
+        policy_state.update({"params": jnp.ones((4, 2))})
+        state = set_loader_policy_state(state, policy_state)
 ```
 """

@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 
 from cyreal.sources import ArraySource
-from cyreal.transforms import BufferTransform, TimeSeriesBatchTransform
+from cyreal.transforms import BatchTransform, BufferTransform, TimeSeriesBatchTransform
 
 
 def _sequential_source(length: int = 32) -> ArraySource:
@@ -137,3 +137,29 @@ def test_reservoir_write_matches_reference():
     actual = np.asarray(state.buffer["value"])
     expected = _simulate_reservoir(range(total), capacity, key)
     np.testing.assert_array_equal(actual, expected)
+
+
+def test_buffer_with_sample_size_then_batch_transform():
+    k = 6
+    source = _sequential_source(length=128)
+    buffer = BufferTransform(
+        capacity=32,
+        prefill=12,
+        sample_size=k,
+        mode="shuffled",
+        write_mode="fifo",
+    )(source)
+    pipeline = BatchTransform(batch_size=k // 2)(buffer)
+    state = pipeline.init_state(jax.random.PRNGKey(0))
+
+    # Warm up to ensure buffer emits cached samples
+    for _ in range(6):
+        _, _, state = pipeline.next(state)
+
+    batch, mask, state = pipeline.next(state)
+
+    assert batch["value"].shape == (k // 2, k)
+    assert mask.shape == (k // 2,)
+    mask_np = np.asarray(mask)
+    assert mask_np.dtype == np.bool_
+    assert mask_np.all()

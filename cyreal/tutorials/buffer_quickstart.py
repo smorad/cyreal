@@ -16,13 +16,10 @@ pipeline = [
     # You can use it for either reservoir sampling or FIFO buffering
     # Prefill determines how many samples to wait before yielding batches
     BufferTransform(capacity=128, prefill=16, sample_size=8, mode="shuffled", write_mode="reservoir"),
-    # BufferTransform yields 16 samples, and we can perform additional subsampling with
-    # BatchTransform if necessary
-    BatchTransform(batch_size=8),
     DevicePutTransform(),
 ]
-loader = DataLoader(pipeline=pipeline)
+loader = DataLoader(pipeline)
 loader_state = loader.init_state(jax.random.key(0))
-sample, mask, loader_state = loader.next(loader_state)
+sample, mask, loader_state = jax.jit(loader.next)(loader_state)
 ```
 """

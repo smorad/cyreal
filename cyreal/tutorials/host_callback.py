@@ -30,5 +30,8 @@ loader = DataLoader(
         HostCallbackTransform(fn=log_loss),
     ],
 )
+# Still jittable
+state = loader.init_state(jax.random.key(0))
+sample, mask, state = jax.jit(loader.next)(state)
 ```
 """

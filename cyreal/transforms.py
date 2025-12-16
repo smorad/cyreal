@@ -176,8 +176,9 @@ class _BatchTransformSource(SourceTransform):
 
             def _consume(_: None):
                 value, value_mask, next_inner_state = self.inner.next(inner_state)
+                sample_mask = jnp.all(jnp.asarray(value_mask, dtype=jnp.bool_))
                 updated_buffer = self._write_slice(buffer, value, i)
-                updated_mask = mask.at[i].set(value_mask)
+                updated_mask = mask.at[i].set(sample_mask)
                 return (next_inner_state, position + 1, updated_buffer, updated_mask), None
 
             def _pad(_: None):
