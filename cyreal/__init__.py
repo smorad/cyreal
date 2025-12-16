@@ -3,9 +3,6 @@
 We use a producer and transform model. Sources stream data from datasets and Transforms transform the data stream. The DataLoader class composes sources and transforms into jittable data pipelines.
 
 
-
-If you are just getting started with `cyreal`, you probably want to 
-
 - `cyreal.datasets` contains datasets such as MNIST, CIFAR-10, etc and associated utilities.
 - `cyreal.loader` contains the `DataLoader` class for building jittable data pipelines.
 - `cyreal.sources` contains data sources such as `ArraySource` and `GymnaxSource`.
