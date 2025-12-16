@@ -112,6 +112,11 @@ class DataLoader:
     def iterate(self, state: _LoaderState, *, steps: int | None = None) -> _LoaderIterator:
         """Return a Python iterator over loader outputs.
 
+        for batch, mask in loader.iterate(state):
+            ...
+
+        WARNING: This method is very slow compared to using `loader.scan_epoch` or jitting `loader.next`.
+
         Args:
             state: Starting loader state.
             steps: Number of steps (updates) to iterate; defaults to a single epoch.
@@ -130,7 +135,14 @@ class DataLoader:
         carry: Any,
         body_fn: Callable[[Any, PyTree, jax.Array], Tuple[Any, Any]],
     ):
-        """Run a full epoch via `jax.lax.scan` with constant-shape batches."""
+        """Run a full epoch via `jax.lax.scan` with constant-shape batches.
+        
+        def body_fn(model_state, batch, mask):
+            ...
+            return new_model_state, None
+
+        state, batch = loader.scan_epoch(state, model_state, body_fn)
+        """
 
         def _body(loop_state, _):
             loader_state, loop_carry = loop_state

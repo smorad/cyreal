@@ -12,7 +12,7 @@ The only dependency is `jax`.
 
 
 ## Quick Start
-Write fast `torch`-style dataloaders without `torch`
+Write fast dataloaders without `torch` or `tensorflow`
 
 ```python
 import jax
@@ -34,16 +34,8 @@ pipeline = [
 ]
 loader = DataLoader(pipeline)
 state = loader.init_state(jax.random.key(0))
-
-for epoch in range(2):
-    for batch, mask in loader.iterate(state):
-        ...  # train your network!
-```
-
-The above code is quite slow. Go ahead and `jit` the loader, it is stateless
-
-```python
 iterate = jax.jit(loader.next)
+
 for epoch in range(2):
     for _ in range(loader.steps_per_epoch):
         batch, state, mask = iterate(state)
@@ -76,3 +68,27 @@ We also provide full end to end training examples
 - [MNIST](examples/mnist_equinox.py)
 - [Time Series](examples/time_series_rnn.py)
 - [Reinforcement Learning](examples/cartpole_pg.py)
+
+## Speed Test
+You can compare the speed to the `grain` dataloader using [this script](cyreal/examples/speed_test.py). This is how long it to iterate though one epoch of MNIST
+
+### MacBook M4 Pro
+
+|Library|Dataset Device|Batch Device|Method|Time (s)|
+|---|---|---|---|---|
+|`grain`|CPU|CPU| Iterator| 1.33
+|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.045
+|`cyreal`|CPU|CPU| `scan_epoch`| 0.095
+
+### A40 with Wimpy CPU
+
+|Library|Dataset Device|Batch Device|Method|Time (s)|
+|---|---|---|---|---|
+|`grain`|CPU|CPU| Iterator| 10.34
+|`grain`|CPU|GPU| Iterator| 11.65
+|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.66
+|`cyreal`|CPU|GPU| `jit(loader.next)`| 0.68
+|`cyreal`|GPU|GPU| `jit(loader.next)`| 0.66
+|`cyreal`|CPU|CPU| `scan_epoch`| 3.78
+|`cyreal`|CPU|GPU| `scan_epoch`| 4.00
+|`cyreal`|GPU|GPU| `scan_epoch`| 4.35

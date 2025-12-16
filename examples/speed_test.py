@@ -109,7 +109,7 @@ def test_cpu_scan(batch_size: int=32):
     loader_state = loader.init_state(jax.random.key(0))
 
     def scan_step(model_state, batch, mask):
-        return mask[0], None
+        return jnp.zeros((), dtype=bool) + mask[0], None
 
     # compile and warmup
     init_state = jnp.zeros((), dtype=jnp.bool_)
@@ -129,12 +129,13 @@ def test_cpu_gpu_scan(batch_size: int=32):
     loader_state = loader.init_state(jax.random.key(0))
 
     def scan_step(model_state, batch, mask):
-        return mask.block_until_ready(), None
+        return mask[0], None
 
     # compile and warmup
-    loader_state, model_state, _ = loader.scan_epoch(loader_state, {}, scan_step)
+    init_state = jnp.zeros((), dtype=jnp.bool_)
+    loader_state, model_state, _ = loader.scan_epoch(loader_state, init_state, scan_step)
     start = time.time()
-    loader_state, model_state, _ = loader.scan_epoch(loader_state, {}, scan_step)
+    loader_state, model_state, _ = loader.scan_epoch(loader_state, init_state, scan_step)
     end = time.time()
     return end - start
 
@@ -148,12 +149,13 @@ def test_gpu_scan(batch_size: int=32):
     loader_state = loader.init_state(jax.random.key(0))
 
     def scan_step(model_state, batch, mask):
-        return mask.block_until_ready(), None
+        return mask[0], None
 
     # compile and warmup
-    loader_state, model_state, _ = loader.scan_epoch(loader_state, {}, scan_step)
+    init_state = jnp.zeros((), dtype=jnp.bool_)
+    loader_state, model_state, _ = loader.scan_epoch(loader_state, init_state, scan_step)
     start = time.time()
-    loader_state, model_state, _ = loader.scan_epoch(loader_state, {}, scan_step)
+    loader_state, model_state, _ = loader.scan_epoch(loader_state, init_state, scan_step)
     end = time.time()
     return end - start
 
@@ -226,9 +228,6 @@ if __name__ == "__main__":
         "Grain CPU Dataset Iterator": test_grain_cpu,
         "Grain GPU Dataset Iterator": test_grain_gpu if has_gpu else lambda: float('nan'),
 
-        "CPU Dataset Iterator": test_cpu_iter,
-        "CPU Dataset GPU Batch Iterator": test_cpu_gpu_iter if has_gpu else lambda: float('nan'),
-
         "CPU Dataset GPU JIT Batch": test_cpu_gpu_jit if has_gpu else lambda: float('nan'),
         "CPU Dataset JIT Batch": test_cpu_jit,
         "GPU Dataset JIT Batch": test_gpu_jit if has_gpu else lambda: float('nan'),
@@ -236,7 +235,12 @@ if __name__ == "__main__":
         "CPU Dataset Scan": test_cpu_scan,
         "CPU Dataset GPU Scan": test_cpu_gpu_scan if has_gpu else lambda: float('nan'),
         "GPU Dataset Scan": test_gpu_scan if has_gpu else lambda: float('nan'),
+
+        # # Warning: Very slow!
+        # "CPU Dataset Iterator": test_cpu_iter,
+        # "CPU Dataset GPU Batch Iterator": test_cpu_gpu_iter if has_gpu else lambda: float('nan'),
+
     }
     for test in tests:
         duration = tests[test]()
-        print(f"{test}: {duration:.4f} seconds")
+        print(f"{test:<30}: {duration:>4.4f} seconds")
