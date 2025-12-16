@@ -33,7 +33,7 @@ pipeline = [
   DevicePutTransform(),
 ]
 loader = DataLoader(pipeline=pipeline)
-state = loader.init_state(jax.random.Key(0))
+state = loader.init_state(jax.random.key(0))
 
 for batch, mask in loader.iterate(state):
   ...  # train your network!
@@ -81,7 +81,7 @@ pipeline = [
   DevicePutTransform(),
 ]
 loader = DataLoader(pipeline)
-loader_state = loader.init_state(jax.random.Key(0))
+loader_state = loader.init_state(jax.random.key(0))
 model_state = model_init()
 
 @jax.jit
@@ -118,7 +118,7 @@ pipeline = [
 ]
 
 loader = DataLoader(pipeline=pipeline)
-state = loader.init_state(jax.random.Key(0))
+state = loader.init_state(jax.random.key(0))
 
 for batch, mask in loader.iterate(state):
   ...  # stream without holding the dataset in RAM
@@ -203,7 +203,7 @@ pipeline = [
     BatchTransform(batch_size=16),
 ]
 loader = DataLoader(pipeline)
-state = loader.init_state(jax.random.Key(0))
+state = loader.init_state(jax.random.key(0))
 state = set_loader_policy_state(state, policy_state)
 
 # Perform one epoch
@@ -211,4 +211,31 @@ for batch, mask in loader.iterate(state):
     # Update the policy state (parameters) after each epoch
     policy_state.update({"params": jnp.ones((4, 2))})
     state = set_loader_policy_state(state, policy_state)
+```
+
+## Continual Learning
+
+Use the `BufferTransform` for reservoir computing or experience replay
+
+```python
+import jax
+import jax.numpy as jnp
+
+from cyreal import (
+  ArraySource,
+  BufferTransform,
+  DataLoader,
+  DevicePutTransform,
+  MNISTDataset,
+)
+
+train_data = MNISTDataset(split="train").as_array_dict()
+pipeline = [
+  ArraySource(train_data, ordering="shuffle"),
+  BufferTransform(capacity=128, prefill=16, sample_size=8, mode="shuffled", write_mode="reservoir"),
+  DevicePutTransform(),
+]
+loader = DataLoader(pipeline)
+loader_state = loader.init_state(jax.random.key(0))
+sample, mask, loader_state = loader.next(loader_state)
 ```

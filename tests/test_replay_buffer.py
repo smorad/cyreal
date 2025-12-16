@@ -1,6 +1,8 @@
 """Tests for the replay buffer transform."""
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -18,6 +20,26 @@ def _sequence_source(num_sequences: int = 16, time_steps: int = 3, features: int
     context = context.reshape(num_sequences, time_steps, features)
     targets = jnp.arange(num_sequences)
     return ArraySource({"context": context, "target": targets}, ordering="sequential")
+
+
+def _simulate_reservoir(expected_values: Sequence[int], capacity: int, key: jax.Array) -> np.ndarray:
+    buffer = np.zeros(capacity, dtype=np.int32)
+    count = 0
+    write_index = 0
+    seen = 0
+    rng = jax.random.fold_in(key, 1)
+    for value in expected_values:
+        rng, write_key, _ = jax.random.split(rng, 3)
+        seen += 1
+        if count < capacity:
+            buffer[write_index] = value
+            write_index = (write_index + 1) % capacity
+            count += 1
+        else:
+            rand_idx = int(jax.random.randint(write_key, (), minval=0, maxval=max(seen, 1)))
+            if rand_idx < capacity:
+                buffer[rand_idx] = value
+    return buffer
 
 
 def test_buffer_sequential_mode_prefill_passthrough():
@@ -94,3 +116,24 @@ def test_buffer_with_time_series_batch_transform():
         expected = expected.reshape(time_steps, features)
         block = context[seq_idx * time_steps : (seq_idx + 1) * time_steps]
         np.testing.assert_array_equal(block, expected)
+
+
+def test_reservoir_write_matches_reference():
+    capacity = 4
+    total = 20
+    key = jax.random.PRNGKey(123)
+    buffer = BufferTransform(
+        capacity=capacity,
+        prefill=capacity,
+        sample_size=1,
+        mode="sequential",
+        write_mode="reservoir",
+    )(_sequential_source(total))
+    state = buffer.init_state(key)
+
+    for _ in range(total):
+        _, _, state = buffer.next(state)
+
+    actual = np.asarray(state.buffer["value"])
+    expected = _simulate_reservoir(range(total), capacity, key)
+    np.testing.assert_array_equal(actual, expected)
