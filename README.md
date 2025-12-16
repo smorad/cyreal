@@ -65,12 +65,12 @@ for epoch in range(2):
 
 ## Examples and Documentation
 
-See our (documentation)[https://smorad.github.io/cyreal/cyreal.html] for more examples.
-- Do you enjoy premature optimization? (Why not `jit` the entire training epoch?)[https://smorad.github.io/cyreal/tutorials/scan_and_jit.html]
-- For the dirty and impure, we support (logging metrics from within a `jit`ted loader.)[https://smorad.github.io/cyreal/tutorials/host_callback.html]
-- Got yourself a huge dataset? (Stream from a disk-backed source.)[https://smorad.github.io/cyreal/tutorials/disk_stream.html]
-- Afraid of finite datasets? We provide (`gymnax`-backed data sources for online reinforcement learning.)[https://smorad.github.io/cyreal/tutorials/rl_quickstart.html]
-- Are you a starving researcher/temporarily embarrassed hyperscaler? We support continual learning via (reservoir sampling and replay buffers.)[https://smorad.github.io/cyreal/tutorials/buffer_quickstart.html]
+See our [documentation](https://smorad.github.io/cyreal/cyreal.html) for more examples.
+- Do you enjoy premature optimization? [Why not `jit` the entire training epoch?](https://smorad.github.io/cyreal/cyreal/tutorials/scan_and_jit.html)
+- For the dirty and impure, we support [logging metrics from within a `jit`ted loader.](https://smorad.github.io/cyreal/cyreal/tutorials/host_callback.html)
+- Got yourself a huge dataset? [Stream from a disk-backed source.](https://smorad.github.io/cyreal/cyreal/tutorials/disk_stream.html)
+- Afraid of finite datasets? We provide [`gymnax`-backed data sources for online reinforcement learning.](https://smorad.github.io/cyreal/cyreal/tutorials/rl_quickstart.html)
+- Are you a starving researcher/temporarily embarrassed hyperscaler? We support continual learning via [reservoir sampling and replay buffers.](https://smorad.github.io/cyreal/cyreal/tutorials/buffer_quickstart.html)
 
 We also provide full end to end training examples
 - [MNIST](examples/mnist_equinox.py)
