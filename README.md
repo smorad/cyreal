@@ -92,3 +92,16 @@ You can compare the speed to the `grain` dataloader using [this script](cyreal/e
 |`cyreal`|CPU|CPU| `scan_epoch`| 3.78
 |`cyreal`|CPU|GPU| `scan_epoch`| 4.00
 |`cyreal`|GPU|GPU| `scan_epoch`| 4.35
+
+### RTX 4090
+
+|Library|Dataset Device|Batch Device|Method|Time (s)|
+|---|---|---|---|---|
+|`grain`|CPU|CPU| Iterator| 3.80
+|`grain`|CPU|GPU| Iterator| 4.04
+|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.50
+|`cyreal`|CPU|GPU| `jit(loader.next)`| 0.50
+|`cyreal`|GPU|GPU| `jit(loader.next)`| 0.50
+|`cyreal`|CPU|CPU| `scan_epoch`| 2.71
+|`cyreal`|CPU|GPU| `scan_epoch`| 2.72
+|`cyreal`|GPU|GPU| `scan_epoch`| 2.68
