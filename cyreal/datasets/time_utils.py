@@ -1,4 +1,5 @@
 """Shared helpers for time-series datasets."""
+
 from __future__ import annotations
 
 from typing import Literal
@@ -46,12 +47,21 @@ def select_split(
     return values[start:]
 
 
-def window_series(
+def sliding_window_series(
     series: np.ndarray,
     *,
+    overlapping: bool,
     context_length: int,
     prediction_length: int,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Prepare sliding windows from a time series.
+
+    Args:
+        series: The time series to prepare windows from.
+        overlapping: Whether the context and target windows should overlap. Useful for training neural CDE models.
+        context_length: The length of the context window.
+        prediction_length: The length of the prediction window.
+    """
     if context_length <= 0 or prediction_length <= 0:
         raise ValueError("context_length and prediction_length must be positive.")
     total = len(series) - (context_length + prediction_length) + 1
@@ -61,11 +71,19 @@ def window_series(
         )
     contexts = []
     targets = []
-    for i in range(total):
-        ctx = series[i : i + context_length]
-        tgt = series[i + context_length : i + context_length + prediction_length]
-        contexts.append(ctx)
-        targets.append(tgt)
+    if overlapping:
+        for i in range(total):
+            ctx = series[i : i + context_length]
+            tgt = series[i : i + context_length + prediction_length]
+            contexts.append(ctx)
+            targets.append(tgt)
+    else:
+        for i in range(total):
+            ctx = series[i : i + context_length]
+            tgt = series[i + context_length : i + context_length + prediction_length]
+            contexts.append(ctx)
+            targets.append(tgt)
+
     return np.stack(contexts, axis=0), np.stack(targets, axis=0)
 
 
@@ -77,6 +95,7 @@ def prepare_time_windows(
     value_column: int,
     skip_header: int,
     split: Literal["train", "test"],
+    overlapping: bool,
     context_length: int,
     prediction_length: int,
     train_fraction: float,
@@ -85,15 +104,18 @@ def prepare_time_windows(
 ) -> tuple[np.ndarray, np.ndarray]:
     base_dir = resolve_cache_dir(cache_dir, default_name=f"cyreal_{dataset_name}")
     csv_path = ensure_csv(base_dir, filename, url, data_path)
-    values = load_value_column(csv_path, skip_header=skip_header, value_column=value_column)
+    values = load_value_column(
+        csv_path, skip_header=skip_header, value_column=value_column
+    )
     split_values = select_split(
         values,
         split=split,
         train_fraction=train_fraction,
         context_length=context_length,
     )
-    contexts, targets = window_series(
+    contexts, targets = sliding_window_series(
         split_values,
+        overlapping=overlapping,
         context_length=context_length,
         prediction_length=prediction_length,
     )
@@ -104,13 +126,27 @@ def make_sequence_disk_source(
     *,
     contexts: np.ndarray,
     targets: np.ndarray,
-    context_length: int,
-    prediction_length: int,
     ordering: Literal["sequential", "shuffle"],
     prefetch_size: int,
 ) -> DiskSource:
+    """Create a DiskSource for a time series dataset.
+
+    Internally resolves the context and target lengths from the input arrays.
+
+    Args:
+        contexts: The context windows.
+        targets: The target windows.
+        ordering: The ordering of the samples.
+        prefetch_size: The number of samples to prefetch.
+
+    Returns:
+        A DiskSource for the time series dataset.
+    """
     contexts_np = np.array(contexts, copy=True)
     targets_np = np.array(targets, copy=True)
+
+    context_length = int(contexts_np.shape[1])
+    prediction_length = int(targets_np.shape[1])
 
     def _read_sample(index: int | np.ndarray) -> dict[str, np.ndarray]:
         idx = int(np.asarray(index))
@@ -136,7 +172,7 @@ def make_sequence_disk_source(
 __all__ = [
     "load_value_column",
     "select_split",
-    "window_series",
+    "sliding_window_series",
     "prepare_time_windows",
     "make_sequence_disk_source",
 ]

@@ -1,4 +1,5 @@
 """Daily minimum temperature dataset built from CSV windows."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -11,9 +12,7 @@ from ..sources import DiskSource
 from .time_utils import make_sequence_disk_source, prepare_time_windows
 from .utils import to_host_jax_array as _to_host_jax_array
 
-DAILY_MIN_TEMPS_URL = (
-    "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
-)
+DAILY_MIN_TEMPS_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv"
 
 
 @dataclass
@@ -21,6 +20,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
     """A time series regression dataset of daily minimum temperatures from the Bureau of Meteorology."""
 
     split: Literal["train", "test"] = "train"
+    overlapping: bool = False
     context_length: int = 30
     prediction_length: int = 1
     train_fraction: float = 0.8
@@ -35,6 +35,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
             skip_header=1,
             value_column=1,
             split=self.split,
+            overlapping=self.overlapping,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
@@ -79,6 +80,7 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
             skip_header=1,
             value_column=1,
             split=split,
+            overlapping=False,
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
@@ -88,8 +90,6 @@ class DailyMinTemperaturesDataset(DatasetProtocol):
         return make_sequence_disk_source(
             contexts=contexts,
             targets=targets,
-            context_length=context_length,
-            prediction_length=prediction_length,
             ordering=ordering,
             prefetch_size=prefetch_size,
         )

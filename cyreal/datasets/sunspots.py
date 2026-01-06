@@ -21,6 +21,7 @@ class SunspotsDataset(DatasetProtocol):
     """A time series classification dataset of sunspot counts from SILSO."""
 
     split: Literal["train", "test"] = "train"
+    overlapping: bool = False
     context_length: int = 24
     prediction_length: int = 1
     train_fraction: float = 0.8
@@ -35,6 +36,7 @@ class SunspotsDataset(DatasetProtocol):
             skip_header=1,
             value_column=1,
             split=self.split,
+            overlapping=self.overlapping,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
@@ -79,6 +81,7 @@ class SunspotsDataset(DatasetProtocol):
             skip_header=1,
             value_column=1,
             split=split,
+            overlapping=False,
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
@@ -88,8 +91,6 @@ class SunspotsDataset(DatasetProtocol):
         return make_sequence_disk_source(
             contexts=contexts,
             targets=targets,
-            context_length=context_length,
-            prediction_length=prediction_length,
             ordering=ordering,
             prefetch_size=prefetch_size,
         )
