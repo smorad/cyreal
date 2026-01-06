@@ -37,32 +37,64 @@ def select_split(
     val_fraction: float = 0.0,
     context_length: int,
 ) -> np.ndarray:
-    if not 0 < train_fraction < 1:
-        raise ValueError("train_fraction must be between 0 and 1.")
-    if not 0.0 <= val_fraction < 1:
-        raise ValueError("val_fraction must be between 0 (inclusive) and 1 (exclusive).")
-    if train_fraction + val_fraction >= 1:
-        raise ValueError("train_fraction + val_fraction must be < 1.")
-    train_len = max(int(len(values) * train_fraction), 1)
-    train_len = min(train_len, len(values))
+    """Slice a time-aligned array into train/val/test, with history overlap for non-train splits.
 
-    if split == "val" and val_fraction == 0.0:
-        raise ValueError("val_fraction must be > 0 when split='val'.")
+    This helper is designed for *time-series windowing* workflows where your model
+    needs a fixed-length history (``context_length``) to make the first prediction in
+    a new split.
+
+    The key behavior: for ``split in {"val", "test"}``, we *prepend* up to
+    ``context_length`` points from the end of the previous split so that the first
+    (val/test) window can still have a full context.
+
+    Example:
+
+        Full series (time ->):
+        [ t0 ... t79 | t80 ... t89 | t90 ... t99 ]
+             train         val           test
+
+        With context_length = 5, we slice as:
+        train: [ t0 ... t79 ]
+        val:   [ t75 t76 t77 t78 t79 | t80 ... t89 ]
+        test:  [ t85 t86 t87 t88 t89 | t90 ... t99 ]
+
+    Notes:
+    - This assumes the *time axis is axis 0*. It works for univariate ``(T,)`` as well
+      as multivariate ``(T, F)`` arrays.
+    - If you have separate time-aligned arrays (e.g. inputs ``x`` and labels ``y``),
+      apply this same slicing policy to both (same parameters) so they stay aligned.
+    """
+    n = int(len(values))
+    if n <= 0:
+        raise ValueError("values must be non-empty.")
+    if not 0.0 < train_fraction < 1.0:
+        raise ValueError("train_fraction must be in (0, 1).")
+    if not 0.0 <= val_fraction < 1.0:
+        raise ValueError("val_fraction must be in [0, 1).")
+    if train_fraction + val_fraction >= 1.0:
+        raise ValueError("train_fraction + val_fraction must be < 1.")
+
+    train_end = min(max(int(n * train_fraction), 1), n)
 
     if val_fraction > 0.0:
-        val_end = max(int(len(values) * (train_fraction + val_fraction)), train_len + 1)
-        val_end = min(val_end, len(values))
+        val_end = min(max(int(n * (train_fraction + val_fraction)), train_end + 1), n)
     else:
-        val_end = train_len
+        val_end = train_end
 
     if split == "train":
-        return values[:train_len]
-    overlap = max(context_length, 1)
-    if split == "val":
-        start = max(train_len - overlap, 0)
-        return values[start:val_end]
-    start = max(val_end - overlap, 0)
-    return values[start:]
+        start, end = 0, train_end
+    elif split == "val":
+        if val_fraction == 0.0:
+            raise ValueError("val_fraction must be > 0 when split='val'.")
+        start, end = train_end, val_end
+    else:
+        start, end = val_end, n
+
+    if split != "train":
+        overlap = max(context_length, 1)
+        start = max(start - overlap, 0)
+
+    return values[start:end]
 
 
 def sliding_window_series(
