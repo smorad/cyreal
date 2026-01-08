@@ -38,34 +38,15 @@ def select_split(
 ) -> np.ndarray:
     """Slice time-aligned arrays into train/val/test, with history overlap for non-train splits.
 
-    This helper is designed for *time-series windowing* workflows where your model
-    needs a fixed-length history (``context_length``) to make the first prediction in
-    a new split.
-
-    The key behavior: for ``split in {"val", "test"}``, we *prepend* up to
-    ``context_length`` points from the end of the previous split so that the first
-    (val/test) window can still have a full context.
-
-    Example:
-
-        Full series (time ->):
-        [ t0 ... t79 | t80 ... t89 | t90 ... t99 ]
-             train         val           test
-
-        With context_length = 5, we slice as:
-        train: [ t0 ... t79 ]
-        val:   [ t75 t76 t77 t78 t79 | t80 ... t89 ]
-        test:  [ t85 t86 t87 t88 t89 | t90 ... t99 ]
-
-    Notes:
-    - This assumes the *time axis is axis 0*. It works for univariate ``(T,)`` as well
-      as multivariate ``(T, F)`` arrays.
-    - If you have separate time-aligned arrays (e.g. inputs ``x`` and labels ``y``),
-      apply this same slicing policy to both (same parameters) so they stay aligned.
+    For (T,) or (T, D): slices along axis 0
+    For (B, T, D): slices along axis 1 (time)
     """
-    n = int(len(array))
+    # Detect time axis: if 3+ dims assume (batch, time, ...)
+    time_axis = 1 if array.ndim >= 3 else 0
+    n = int(array.shape[time_axis])
+
     if n <= 0:
-        raise ValueError("Array must be non-empty.")
+        raise ValueError("Array must be non-empty along time axis.")
     if not 0.0 < train_fraction < 1.0:
         raise ValueError("train_fraction must be in (0, 1).")
     if not 0.0 <= val_fraction < 1.0:
@@ -95,7 +76,9 @@ def select_split(
         overlap = context_length
         start = max(start - overlap, 0)
 
-    return array[start:end]
+    if time_axis == 0:
+        return array[start:end]
+    return array[:, start:end]
 
 
 def sliding_window_many(
@@ -104,40 +87,10 @@ def sliding_window_many(
     stride: int = 1,
     offset: int = 0,
 ) -> np.ndarray:
-    """Create aligned sliding windows for an array.
+    """Create aligned sliding windows along the time axis.
 
-    The core slice is:
-
-        a[s + offset : s + offset + window_size]
-
-    Diagram 1: disjoint context/target windows (common forecasting setup)
-
-        series:  [0 1 2 3 4 5 6 7 8 9 ...]
-
-        context_length = 4
-        prediction_length = 3
-
-        for start s = 0:
-          context offset=0, window_size=4:     [0 1 2 3]
-          target  offset=4, window_size=3:             [4 5 6]
-
-        for start s = 1:
-          context:                                [1 2 3 4]
-          target:                                         [5 6 7]
-
-    Diagram 2: target is a prefix-extended window (seq-to-seq style)
-
-        context_length = 4
-        target_window_size = 7
-        offset = 0
-
-        context: [0 1 2 3]
-        target:  [0 1 2 3 4 5 6]
-
-    This is the generic building block for:
-    - context-only windows: ``sliding_window_many(x, window_size=context_length)``
-    - future-only targets: ``sliding_window_many(x, window_size=prediction_length, offset=context_length)``
-    - separate inputs/labels: call it separately on each aligned array with the same parameters.
+    For (T,) or (T, D): windows along axis 0
+    For (B, T, D): windows along axis 1
     """
     if window_size <= 0:
         raise ValueError("window_size must be positive.")
@@ -146,22 +99,27 @@ def sliding_window_many(
     if offset < 0:
         raise ValueError("offset must be >= 0.")
 
-    t = int(len(array))
+    # Detect time axis: if 3+ dims assume (batch, time, ...)
+    time_axis = 1 if array.ndim >= 3 else 0
+    t = int(array.shape[time_axis])
+
     if t <= 0:
-        raise ValueError("Array must be non-empty.")
+        raise ValueError("Array must be non-empty along time axis.")
 
     total = t - (offset + window_size) + 1
     if total <= 0:
         raise ValueError("Series too short for requested window_size/offset.")
-    # shape: (t - window_size + 1, window_size, ...)
+
     all_windows = np.lib.stride_tricks.sliding_window_view(
         array,
         window_shape=window_size,
-        axis=0,
+        axis=time_axis,
     )
 
     # pick starts: offset + [0, stride, 2*stride, ...]
-    return all_windows[offset : offset + total : stride]
+    if time_axis == 0:
+        return all_windows[offset : offset + total : stride]
+    return all_windows[:, offset : offset + total : stride]
 
 
 def load_time_series_from_csv(
@@ -238,7 +196,10 @@ def prepare_time_series_windows(
     # Align counts: `targets` needs `context_length + prediction_length` points, so it
     # is always the limiting factor. `contexts` may contain extra suffix windows that
     # cannot be paired with a future target.
-    contexts = contexts[: targets.shape[0]]
+    if contexts.ndim == 2:
+        contexts = contexts[: targets.shape[0]]
+    else:
+        contexts = contexts[:, : targets.shape[1]]
     return contexts, targets
 
 
@@ -248,9 +209,10 @@ def prepare_seq_to_seq_windows(
     split: Literal["train", "val", "test"],
     input_window_len: int,
     target_window_len: int,
-    target_offset: int = 0,
     train_fraction: float = 0.8,
     val_fraction: float = 0.0,
+    sliding_window_stride: int = 1,
+    target_offset: int = 0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Prepare aligned context/target windows from two time-aligned sequences.
 
@@ -319,8 +281,16 @@ def prepare_seq_to_seq_windows(
     Returns:
         A tuple of context and target arrays.
     """
-    if not len(input_sequence) == len(target_sequence):
-        raise ValueError("All sequences must have the same length.")
+    if input_sequence.ndim == 0 or target_sequence.ndim == 0:
+        raise ValueError("All sequences must have at least 1 dimension.")
+    if input_sequence.ndim == 1 and target_sequence.ndim == 1:
+        if int(input_sequence.shape[0]) != int(target_sequence.shape[0]):
+            raise ValueError("All sequences must have the same length.")
+    else:
+        if int(input_sequence.shape[1]) != int(target_sequence.shape[1]):
+            raise ValueError("All sequences must have the same length along axis 1 (time).")
+        if int(input_sequence.shape[0]) != int(target_sequence.shape[0]):
+            raise ValueError("All sequences must have the same batch size along axis 0.")
     split_inputs = select_split(
         input_sequence,
         split=split,
@@ -339,17 +309,28 @@ def prepare_seq_to_seq_windows(
     contexts = sliding_window_many(
         split_inputs,
         window_size=input_window_len,
+        stride=sliding_window_stride,
     )
     targets = sliding_window_many(
         split_targets,
         window_size=target_window_len,
+        stride=sliding_window_stride,
         offset=target_offset,
     )
 
-    # Align the number of windows. `targets` is the limiting factor because it needs
-    # `context_length + prediction_length` points; `contexts` may contain extra suffix
-    # windows that cannot be paired with a future target.
-    contexts = contexts[: targets.shape[0]]
+    # Align the number of windows along axis 1.
+    contexts = contexts[:, : targets.shape[1]]
+
+    # For batched (B, T, D) inputs, reshape to (B*N, W, D) for training
+    if input_sequence.ndim >= 3:
+        # Currently: (B, N, D, W) → move window to axis 1 → (B, W, N, D) → wait no
+        # Currently: (B, N, D, W)
+        # Need: (B*N, W, D)
+        # Step 1: moveaxis -1 to 2: (B, N, W, D)
+        # Step 2: reshape to (B*N, W, D)
+        contexts = np.moveaxis(contexts, -1, 2)
+        targets = np.moveaxis(targets, -1, 2)
+
     return contexts, targets
 
 
