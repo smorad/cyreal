@@ -603,21 +603,29 @@ class MapTransform:
 
     fn: Callable[[PyTree, jax.Array], PyTree]
     """Function to apply to each batch. Receives (batch, mask) as arrays."""
+    element_spec_override: PyTree | None = None
+    """Optional output element spec for structure-changing maps."""
 
     def __call__(self, inner: Source) -> Source:
-        return _MapTransformSource(inner=inner, fn=self.fn)
+        return _MapTransformSource(
+            inner=inner,
+            fn=self.fn,
+            element_spec_override=self.element_spec_override,
+        )
 
 
 @dataclass
 class _MapTransformSource(SourceTransform):
     inner: Source
     fn: Callable[[PyTree, jax.Array], PyTree]
+    element_spec_override: PyTree | None = None
 
     def __post_init__(self) -> None:
         self.steps_per_epoch = self.inner.steps_per_epoch
+        self._element_spec = self.element_spec_override or self.inner.element_spec()
 
     def element_spec(self) -> PyTree:
-        return self.inner.element_spec()
+        return self._element_spec
 
     def init_state(self, key: jax.Array | None = None):
         return self.inner.init_state(key)
@@ -762,6 +770,64 @@ def _require_spec_mapping(spec: PyTree, key: str) -> dict[str, jax.ShapeDtypeStr
     if key not in spec:
         raise KeyError(f"Key '{key}' not found in element spec.")
     return dict(spec)
+
+
+def _rename_mapping_keys(mapping: Mapping[str, Any], renames: Mapping[str, str]) -> dict[str, Any]:
+    if not isinstance(mapping, Mapping):
+        raise TypeError("Batch must be a mapping when using RenameTransform.")
+
+    renamed: dict[str, Any] = {}
+    for key, value in mapping.items():
+        target_key = renames.get(key, key)
+        if target_key in renamed:
+            raise ValueError(
+                "RenameTransform produced duplicate key "
+                f"'{target_key}'. Check for key collisions in renames."
+            )
+        renamed[target_key] = value
+    return renamed
+
+
+@dataclass
+class RenameTransform:
+    """Rename keys in dictionary-like batches."""
+
+    renames: Mapping[str, str]
+    """Mapping from existing key names to new key names."""
+
+    def __call__(self, inner: Source) -> Source:
+        return _RenameTransformSource(inner=inner, renames=self.renames)
+
+
+@dataclass
+class _RenameTransformSource(SourceTransform):
+    inner: Source
+    renames: Mapping[str, str]
+
+    def __post_init__(self) -> None:
+        self.steps_per_epoch = self.inner.steps_per_epoch
+        spec = self.inner.element_spec()
+        if not isinstance(spec, Mapping):
+            raise TypeError("Element spec must be a mapping when using RenameTransform.")
+
+        spec_mapping = dict(spec)
+        missing_keys = [key for key in self.renames if key not in spec_mapping]
+        if missing_keys:
+            missing = ", ".join(sorted(missing_keys))
+            raise KeyError(f"RenameTransform key(s) not found in element spec: {missing}")
+
+        self._element_spec = _rename_mapping_keys(spec_mapping, self.renames)
+
+    def element_spec(self) -> PyTree:
+        return self._element_spec
+
+    def init_state(self, key: jax.Array | None = None):
+        return self.inner.init_state(key)
+
+    def next(self, state):
+        batch, mask, inner_state = self.inner.next(state)
+        renamed_batch = _rename_mapping_keys(batch, self.renames)
+        return renamed_batch, mask, inner_state
 
 
 @dataclass
