@@ -1,4 +1,5 @@
 """Sunspots time-series dataset built from CSV windows."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,38 +9,42 @@ import jax
 
 from .dataset_protocol import DatasetProtocol
 from ..sources import DiskSource
-from .time_utils import make_sequence_disk_source, prepare_time_windows
+from .time_utils import load_time_series_from_csv, make_sequence_disk_source, prepare_time_series_windows
 from .utils import to_host_jax_array as _to_host_jax_array
 
-SUNSPOTS_URL = (
-    "https://raw.githubusercontent.com/jbrownlee/Datasets/master/monthly-sunspots.csv"
-)
+SUNSPOTS_URL = "https://raw.githubusercontent.com/jbrownlee/Datasets/master/monthly-sunspots.csv"
 
 
 @dataclass
 class SunspotsDataset(DatasetProtocol):
     """A time series classification dataset of sunspot counts from SILSO."""
 
-    split: Literal["train", "test"] = "train"
+    split: Literal["train", "val", "test"] = "train"
+    overlapping: bool = False
     context_length: int = 24
     prediction_length: int = 1
     train_fraction: float = 0.8
+    val_fraction: float = 0.0
     cache_dir: str | None = None
     data_path: str | None = None
 
     def __post_init__(self) -> None:
-        contexts, targets = prepare_time_windows(
+        values = load_time_series_from_csv(
+            cache_dir=self.cache_dir,
             dataset_name="sunspots",
             filename="monthly-sunspots.csv",
             url=SUNSPOTS_URL,
+            data_path=self.data_path,
             skip_header=1,
             value_column=1,
+        )
+        contexts, targets = prepare_time_series_windows(
+            series=values,
             split=self.split,
             context_length=self.context_length,
             prediction_length=self.prediction_length,
             train_fraction=self.train_fraction,
-            cache_dir=self.cache_dir,
-            data_path=self.data_path,
+            val_fraction=self.val_fraction,
         )
         self._contexts = _to_host_jax_array(contexts)
         self._targets = _to_host_jax_array(targets)
@@ -61,10 +66,11 @@ class SunspotsDataset(DatasetProtocol):
     def make_disk_source(
         cls,
         *,
-        split: Literal["train", "test"] = "train",
+        split: Literal["train", "val", "test"] = "train",
         context_length: int = 24,
         prediction_length: int = 1,
         train_fraction: float = 0.8,
+        val_fraction: float = 0.0,
         cache_dir: str | None = None,
         data_path: str | None = None,
         ordering: Literal["sequential", "shuffle"] = "shuffle",
@@ -72,24 +78,26 @@ class SunspotsDataset(DatasetProtocol):
     ) -> DiskSource:
         """Return the dataset in a disk streaming format."""
 
-        contexts, targets = prepare_time_windows(
+        values = load_time_series_from_csv(
+            cache_dir=cache_dir,
             dataset_name="sunspots",
             filename="monthly-sunspots.csv",
             url=SUNSPOTS_URL,
+            data_path=data_path,
             skip_header=1,
             value_column=1,
+        )
+        contexts, targets = prepare_time_series_windows(
+            series=values,
             split=split,
             context_length=context_length,
             prediction_length=prediction_length,
             train_fraction=train_fraction,
-            cache_dir=cache_dir,
-            data_path=data_path,
+            val_fraction=val_fraction,
         )
         return make_sequence_disk_source(
             contexts=contexts,
             targets=targets,
-            context_length=context_length,
-            prediction_length=prediction_length,
             ordering=ordering,
             prefetch_size=prefetch_size,
         )

@@ -1,13 +1,14 @@
-"""Train a simple RNN on cyreal's built-in time-series datasets.
+"""Train a simple Neural CDE on cyreal's built-in time-series datasets.
 
 Usage:
-  python examples/time_series_rnn.py --epochs 20 --batch-size 64 --dataset daily-min
+  python examples/neural_cde.py --epochs 20 --batch-size 64 --dataset daily-min
 """
 
 from __future__ import annotations
 
 import argparse
 from time import time
+from collections.abc import Callable
 from typing import Literal, Tuple, Type
 
 import equinox as eqx
@@ -15,7 +16,7 @@ import jax
 import jax.numpy as jnp
 import optax
 import tqdm
-
+import diffrax
 from cyreal.transforms import (
     BatchTransform,
     DevicePutTransform,
@@ -116,28 +117,140 @@ def build_loaders(args: argparse.Namespace) -> Tuple[DataLoader, DataLoader]:
     return train_loader, test_loader
 
 
-class SimpleRNN(eqx.Module):
-    Wx: jax.Array
-    Wh: jax.Array
-    b: jax.Array
-    readout: eqx.nn.Linear
+class NeuralCDE(eqx.Module):
+    """
+    Neural Controlled Differential Equation model.
 
-    def __init__(self, input_size: int, hidden_size: int, output_size: int, *, key: jax.Array):
+    Usage
+    - Provide `ts` and either a `diffrax` control path or cubic interpolation coeffs.
+    - The model solves the induced ODE and applies a readout on the hidden state.
+    """
+
+    # Modules
+    initial_cond_mlp: eqx.nn.MLP
+    vf_mlp: eqx.nn.MLP
+    readout_layer: eqx.nn.Linear
+    cde_state_dim: int
+    input_path_dim: int
+
+    # Static configuration
+    readout_activation: Callable[[jax.Array], jax.Array] = eqx.field(static=True)
+    evolving_out: bool = eqx.field(static=True)
+
+    # Solver configuration
+    solver: diffrax.AbstractAdaptiveSolver = eqx.field(static=True)
+    stepsize_controller: diffrax.AbstractStepSizeController = eqx.field(static=True)
+
+    def __init__(
+        self,
+        input_path_dim: int,
+        cde_state_dim: int,
+        output_path_dim: int,
+        init_hidden_dim: int,
+        initial_cond_mlp_depth: int,
+        vf_hidden_dim: int,
+        vf_mlp_depth: int,
+        *,
+        key: jax.Array,
+        readout_activation: Callable[[jax.Array], jax.Array] = lambda x: x,
+        solver: diffrax.AbstractAdaptiveSolver = diffrax.Tsit5(),
+        stepsize_controller: diffrax.AbstractStepSizeController = diffrax.PIDController(
+            rtol=1e-2, atol=1e-3, dtmin=1e-6
+        ),
+        evolving_out: bool = False,
+    ) -> None:
+        if init_hidden_dim != cde_state_dim:
+            raise ValueError(
+                "This example expects init_hidden_dim == cde_state_dim so that the "
+                "initial condition and vector field operate on the same hidden state size."
+            )
         k1, k2, k3 = jax.random.split(key, 3)
-        limit = 1.0 / jnp.sqrt(max(input_size, 1))
-        self.Wx = jax.random.uniform(k1, (input_size, hidden_size), minval=-limit, maxval=limit)
-        self.Wh = jax.random.uniform(k2, (hidden_size, hidden_size), minval=-limit, maxval=limit)
-        self.b = jnp.zeros((hidden_size,), dtype=jnp.float32)
-        self.readout = eqx.nn.Linear(hidden_size, output_size, key=k3)
 
-    def __call__(self, sequence: jax.Array) -> jax.Array:
-        def step(h, x):
-            h_new = jnp.tanh(jnp.dot(x, self.Wx) + jnp.dot(h, self.Wh) + self.b)
-            return h_new, None
+        # Modules
+        self.initial_cond_mlp = eqx.nn.MLP(
+            in_size=input_path_dim,
+            out_size=cde_state_dim,
+            width_size=vf_hidden_dim,
+            depth=initial_cond_mlp_depth,
+            activation=jax.nn.softplus,
+            key=k1,
+        )
+        self.vf_mlp = eqx.nn.MLP(
+            in_size=cde_state_dim,
+            out_size=cde_state_dim
+            * input_path_dim,  # Shaped as such to reshape into (cde_state_dim, input_path_dim) matrix for dx/dt multiplication
+            width_size=vf_hidden_dim,
+            depth=vf_mlp_depth,
+            activation=jax.nn.softplus,
+            key=k2,
+        )
+        self.readout_layer = eqx.nn.Linear(
+            in_features=cde_state_dim,
+            out_features=output_path_dim,
+            use_bias=True,
+            key=k3,
+        )
+        self.readout_activation = readout_activation
+        self.cde_state_dim = cde_state_dim
+        self.input_path_dim = input_path_dim
 
-        hidden0 = jnp.zeros(self.b.shape, dtype=sequence.dtype)
-        final_hidden, _ = jax.lax.scan(step, hidden0, sequence)
-        return self.readout(final_hidden)
+        # Static configuration
+        self.evolving_out = evolving_out
+
+        # Solver configuration
+        self.solver = solver
+        self.stepsize_controller = stepsize_controller
+
+    def _apply_readout(self, hidden_states: jax.Array) -> jax.Array:
+        """Apply readout to hidden states."""
+
+        def apply_single(y: jax.Array) -> jax.Array:
+            activation = self.readout_activation(self.readout_layer(y))
+            return activation
+
+        return jax.vmap(apply_single)(hidden_states)
+
+    def __call__(
+        self,
+        control: jax.Array,
+    ) -> jax.Array:
+        """
+        Forward pass.
+
+        Given control path, build interpolation and solve the CDE.
+        """
+        # `control` is the observed path X(t) with shape (T, input_path_dim).
+        # Use an index-based time grid; the dataset does not provide explicit timestamps.
+        ts = jnp.arange(control.shape[0], dtype=jnp.float32)  # (T,)
+        coeffs = diffrax.backward_hermite_coefficients(ts=ts, ys=control)
+        interpolated_control = diffrax.CubicInterpolation(ts, coeffs)
+        x0 = interpolated_control.evaluate(ts[0])  # (input_path_dim,)
+        y0 = self.initial_cond_mlp(x0)  # (cde_state_dim,)
+
+        def vf(t: diffrax._custom_types.RealScalarLike, y: jax.Array, args: object) -> jax.Array:
+            del t, args
+            return self.vf_mlp(y).reshape(self.cde_state_dim, self.input_path_dim)
+
+        term = diffrax.ControlTerm(vf, interpolated_control).to_ode()
+        saveat = diffrax.SaveAt(ts=ts)
+
+        solution = diffrax.diffeqsolve(
+            terms=term,
+            solver=self.solver,
+            t0=ts[0],
+            t1=ts[-1],
+            dt0=None,
+            y0=y0,
+            stepsize_controller=self.stepsize_controller,
+            saveat=saveat,
+        )
+
+        assert solution.ys is not None
+
+        if self.evolving_out:
+            return self._apply_readout(solution.ys)
+
+        return self.readout_activation(self.readout_layer(solution.ys[-1]))
 
 
 def make_epoch_fn(loader: DataLoader, optimizer: optax.GradientTransformation, model_static):
@@ -170,11 +283,16 @@ def make_epoch_fn(loader: DataLoader, optimizer: optax.GradientTransformation, m
 
 def evaluate(model_params, model_static, loader: DataLoader, loader_state):
     model = eqx.combine(model_params, model_static)
+
+    @eqx.filter_jit
+    def predict(context: jax.Array) -> jax.Array:
+        return eqx.filter_vmap(model)(context)
+
     iterator = loader.iterate(loader_state)
     total_loss = 0.0
     total_weight = 0.0
     for batch, mask in iterator:
-        preds = eqx.filter_vmap(model)(batch["context"])
+        preds = predict(batch["context"])
         per_example = jnp.mean((preds - batch["target"]) ** 2, axis=-1)
         weights = mask.astype(jnp.float32)
         total_loss += float(jnp.sum(per_example * weights))
@@ -194,7 +312,16 @@ def main() -> None:
 
     context_spec = train_loader._source.element_spec()["context"]  # noqa: SLF001 - example script
     feature_size = int(context_spec.shape[-1])
-    model = SimpleRNN(feature_size, args.hidden_size, args.prediction_length, key=model_key)
+    model = NeuralCDE(
+        feature_size,
+        args.hidden_size,
+        args.prediction_length,
+        init_hidden_dim=args.hidden_size,
+        initial_cond_mlp_depth=2,
+        vf_hidden_dim=args.hidden_size,
+        vf_mlp_depth=2,
+        key=model_key,
+    )
     model_params, model_static = eqx.partition(model, eqx.is_array)
     optimizer = optax.adam(args.learning_rate)
     opt_state = optimizer.init(model_params)
