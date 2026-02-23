@@ -17,6 +17,7 @@ from cyreal.transforms import (
     DevicePutTransform,
     HostCallbackTransform,
     MapTransform,
+    RenameTransform,
     TimeSeriesBatchTransform,
     FlattenTransform,
     NormalizeImageTransform,
@@ -90,6 +91,65 @@ def test_manual_pipeline_composition_without_operator_overloads():
 
     batch, mask, _ = pipeline.next(state)
     np.testing.assert_array_equal(np.asarray(batch["inputs"]).ravel(), np.array([3.0, 4.0]))
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
+
+
+def test_rename_transform_renames_keys_and_updates_spec():
+    data = {
+        "image": jnp.arange(6, dtype=jnp.float32).reshape(3, 2),
+        "label": jnp.arange(3, dtype=jnp.int32),
+    }
+    source = ArraySource(data=data, ordering="sequential")
+    pipeline = RenameTransform(renames={"image": "x", "label": "y"})(source)
+    batched = BatchTransform(
+        batch_size=2,
+        drop_last=False,
+        element_spec_override=pipeline.element_spec(),
+    )(pipeline)
+
+    spec = pipeline.element_spec()
+    assert set(spec.keys()) == {"x", "y"}
+
+    state = batched.init_state(jax.random.PRNGKey(0))
+    batch, mask, _ = batched.next(state)
+    assert set(batch.keys()) == {"x", "y"}
+    np.testing.assert_array_equal(np.asarray(batch["x"]), np.array([[0.0, 1.0], [2.0, 3.0]]))
+    np.testing.assert_array_equal(np.asarray(batch["y"]), np.array([0, 1]))
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
+
+
+def test_map_transform_spec_override_supports_key_changes():
+    data = {
+        "image": jnp.arange(6, dtype=jnp.float32).reshape(3, 2),
+    }
+    source = ArraySource(data=data, ordering="sequential")
+
+    def map_to_xy(sample, mask):
+        del mask
+        image = sample["image"]
+        return {
+            "x": image,
+            "y": jnp.ones(image.shape, dtype=image.dtype),
+        }
+
+    out_spec = {
+        "x": jax.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32),
+        "y": jax.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32),
+    }
+    mapped = MapTransform(fn=map_to_xy, element_spec_override=out_spec)(source)
+    batched = BatchTransform(
+        batch_size=2,
+        drop_last=False,
+        element_spec_override=mapped.element_spec(),
+    )(mapped)
+
+    assert mapped.element_spec() == out_spec
+
+    state = batched.init_state(jax.random.PRNGKey(0))
+    batch, mask, _ = batched.next(state)
+    assert set(batch.keys()) == {"x", "y"}
+    np.testing.assert_array_equal(np.asarray(batch["x"]), np.array([[0.0, 1.0], [2.0, 3.0]]))
+    np.testing.assert_array_equal(np.asarray(batch["y"]), np.ones((2, 2), dtype=np.float32))
     np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
 
 
