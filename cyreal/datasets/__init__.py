@@ -1,6 +1,7 @@
 """Dataset helpers bundled with cyreal."""
 from __future__ import annotations
 
+from .celeba import CelebADataset
 from .cifar10 import CIFAR10Dataset
 from .cifar100 import CIFAR100Dataset
 from .daily_min_temperatures import DailyMinTemperaturesDataset
@@ -11,6 +12,7 @@ from .mnist import MNISTDataset, MNIST_URLS
 from .sunspots import SunspotsDataset
 
 __all__ = [
+    "CelebADataset",
     "CIFAR10Dataset",
     "CIFAR100Dataset",
     "DailyMinTemperaturesDataset",

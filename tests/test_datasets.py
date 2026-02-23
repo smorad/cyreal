@@ -4,6 +4,7 @@ from __future__ import annotations
 import gzip
 import pickle
 import struct
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -12,6 +13,7 @@ import pytest
 
 from cyreal.transforms import BatchTransform
 from cyreal.datasets import (
+    CelebADataset,
     CIFAR10Dataset,
     CIFAR100Dataset,
     EMNISTDataset,
@@ -88,6 +90,36 @@ def _seed_fake_cifar100(tmp_path, split="train", samples=4):
     }
     with open(target_dir / split, "wb") as f:
         pickle.dump(batch, f, protocol=2)
+
+
+def _seed_fake_celeba(tmp_path: Path):
+    pil = pytest.importorskip("PIL.Image")
+    image_module = pil
+
+    image_dir = tmp_path / "img_align_celeba"
+    image_dir.mkdir(parents=True, exist_ok=True)
+
+    samples = [
+        ("000001.jpg", 0, np.array([1, -1, 1], dtype=np.int8), 10),
+        ("000002.jpg", 1, np.array([-1, 1, -1], dtype=np.int8), 40),
+        ("000003.jpg", 2, np.array([1, 1, -1], dtype=np.int8), 90),
+    ]
+
+    for name, _, _, pixel in samples:
+        image = np.full((4, 5, 3), pixel, dtype=np.uint8)
+        image_module.fromarray(image, mode="RGB").save(image_dir / name)
+
+    with (tmp_path / "list_eval_partition.txt").open("w", encoding="utf-8") as f:
+        f.write(f"{len(samples)}\n")
+        for name, partition, _, _ in samples:
+            f.write(f"{name} {partition}\n")
+
+    with (tmp_path / "list_attr_celeba.txt").open("w", encoding="utf-8") as f:
+        f.write(f"{len(samples)}\n")
+        f.write("Smiling Young Male\n")
+        for name, _, attrs, _ in samples:
+            values = " ".join(str(int(v)) for v in attrs)
+            f.write(f"{name} {values}\n")
 
 
 MNIST_LIKE_DATASETS = [
@@ -226,3 +258,43 @@ def test_cifar100_disk_source_streams_from_disk(tmp_path):
     np.testing.assert_array_equal(np.asarray(batch2["label"][:1]), np.array([2], dtype=np.int32))
     np.testing.assert_array_equal(np.asarray(batch2["coarse_label"][:1]), np.array([2], dtype=np.int32))
     np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
+
+
+def test_celeba_dataset_reads_local_layout(tmp_path):
+    _seed_fake_celeba(tmp_path)
+
+    dataset = CelebADataset(split="valid", data_dir=tmp_path)
+    assert len(dataset) == 1
+
+    sample = dataset[0]
+    assert sample["image"].shape == (4, 5, 3)
+    assert sample["image"].dtype == np.uint8
+    np.testing.assert_array_equal(
+        np.asarray(sample["attributes"]),
+        np.array([0, 1, 0], dtype=np.int32),
+    )
+    assert dataset.attribute_names == ("Smiling", "Young", "Male")
+
+
+def test_celeba_disk_source_streams_from_disk(tmp_path):
+    _seed_fake_celeba(tmp_path)
+
+    source = CelebADataset.make_disk_source(
+        split="test",
+        data_dir=tmp_path,
+        ordering="sequential",
+        prefetch_size=2,
+    )
+    batched = BatchTransform(
+        batch_size=2,
+        element_spec_override=source.element_spec(),
+    )(source)
+
+    state = batched.init_state(jax.random.PRNGKey(0))
+    batch, mask, _ = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, False]))
+    np.testing.assert_array_equal(
+        np.asarray(batch["attributes"][0]),
+        np.array([1, 1, 0], dtype=np.int32),
+    )
+    assert np.asarray(batch["image"])[0].shape == (4, 5, 3)
