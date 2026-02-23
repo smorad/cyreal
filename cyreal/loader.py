@@ -134,6 +134,7 @@ class DataLoader:
         state: _LoaderState,
         carry: Any,
         body_fn: Callable[[Any, PyTree, jax.Array], Tuple[Any, Any]],
+        unroll: bool | int = False,
     ):
         """Run a full epoch via `jax.lax.scan` with constant-shape batches.
         
@@ -143,7 +144,6 @@ class DataLoader:
 
         state, batch = loader.scan_epoch(state, model_state, body_fn)
         """
-
         def _body(loop_state, _):
             loader_state, loop_carry = loop_state
             batch, loader_state, mask = self.next(loader_state)
@@ -151,6 +151,6 @@ class DataLoader:
             return (loader_state, new_carry), output
 
         (loader_state, final_carry), outputs = jax.lax.scan(
-            _body, (state, carry), jnp.arange(self.steps_per_epoch)
+            _body, (state, carry), length=self.steps_per_epoch, unroll=unroll
         )
         return loader_state, final_carry, outputs
