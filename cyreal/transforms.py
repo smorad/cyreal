@@ -43,8 +43,7 @@ class SourceTransform(Source, Protocol):
 class BatchTransform:
     """Batch elements emitted by a source.
     
-    If both drop_last and pad_last_batch are False (default behavior), the final batch will wrap around and contain some samples from the following epoch. This ensures the batch size is 
-    consistent to prevent recompiles. E.g.,
+    If both drop_last and pad_last_batch are False (default behavior), the final batch will wrap around and contain some samples from the following epoch. This ensures the batch size is consistent to prevent recompiles. E.g.,
 
     D = [1, 2, 3, 4, 5], batch_size=2
     Epoch 1: [1, 2], [3, 4], [5, 1]
