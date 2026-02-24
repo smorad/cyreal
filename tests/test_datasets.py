@@ -174,6 +174,7 @@ def test_idx_disk_sources_stream_from_disk(tmp_path, dataset_cls, extra_kwargs):
 
     batched = BatchTransform(
         batch_size=2,
+        pad_last_batch=True,
         element_spec_override=source.element_spec(),
     )(source)
 
@@ -200,6 +201,7 @@ def test_cifar10_disk_source_streams_from_disk(tmp_path):
     )
     batched = BatchTransform(
         batch_size=2,
+        pad_last_batch=True,
         element_spec_override=source.element_spec(),
     )(source)
 
@@ -237,6 +239,7 @@ def test_cifar100_disk_source_streams_from_disk(tmp_path):
 
     batched = BatchTransform(
         batch_size=2,
+        pad_last_batch=True,
         element_spec_override=source.element_spec(),
     )(source)
 
@@ -287,6 +290,7 @@ def test_celeba_disk_source_streams_from_disk(tmp_path):
     )
     batched = BatchTransform(
         batch_size=2,
+        pad_last_batch=True,
         element_spec_override=source.element_spec(),
     )(source)
 
