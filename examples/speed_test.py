@@ -180,7 +180,7 @@ def test_grain_cpu(batch_size: int=32):
             num_epochs=1,
             seed=0,
         ),
-        operations=[pygrain.Batch(batch_size=32)],
+        operations=[pygrain.Batch(batch_size=batch_size)],
         worker_count=0,
     )
 
@@ -213,7 +213,7 @@ def test_grain_gpu(batch_size: int=32):
             num_epochs=1,
             seed=0,
         ),
-        operations=[pygrain.Batch(batch_size=32)],
+        operations=[pygrain.Batch(batch_size=batch_size)],
         worker_count=0,
     )
     start = time.time()

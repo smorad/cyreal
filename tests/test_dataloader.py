@@ -49,6 +49,91 @@ def test_next_padding_and_epoch_reset():
     assert int(inner_state.epoch) == 1
 
 
+def test_next_no_padding_and_epoch_reset():
+    data = {
+        "inputs": jnp.arange(5, dtype=jnp.float32).reshape(5, 1),
+    }
+    source = ArraySource(data=data, ordering="sequential")
+    pipeline = BatchTransform(
+        batch_size=3,
+        pad_last_batch=False,
+        drop_last=False,
+    )(source)
+    loader = DataLoader(pipeline=pipeline)
+    state = loader.init_state(jax.random.PRNGKey(0))
+
+    batch, state, mask = loader.next(state)
+    np.testing.assert_array_equal(np.asarray(batch["inputs"]).ravel(), np.array([0, 1, 2]))
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True, True]))
+
+    batch, state, mask = loader.next(state)
+    np.testing.assert_array_equal(np.asarray(batch["inputs"]).ravel(), np.array([3, 4, 0]))
+    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True, True]))
+    inner_state = state.inner_state.inner_state  # BatchTransformState -> ArraySourceState
+    assert int(inner_state.epoch) == 1
+    assert int(state.inner_state.position_in_epoch) == 1
+
+
+def test_batch_transform_wrap_around_default():
+    data = {"value": jnp.array([0, 1, 2], dtype=jnp.int32)}
+    source = ArraySource(data=data, ordering="sequential")
+    
+    # Default behavior: pad_last_batch=False, drop_last=False
+    batched = BatchTransform(batch_size=2)(source)
+    state = batched.init_state(jax.random.PRNGKey(0))
+    
+    batch1, mask1, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch1["value"]), np.array([0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask1), np.array([True, True]))
+    
+    # Should wrap around and grab the first element of the next epoch
+    batch2, mask2, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch2["value"]), np.array([2, 0], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, True]))
+
+
+def test_batch_transform_pad_last_batch():
+    data = {"value": jnp.array([0, 1, 2], dtype=jnp.int32)}
+    source = ArraySource(data=data, ordering="sequential")
+    
+    # Opt-in padding behavior
+    batched = BatchTransform(batch_size=2, pad_last_batch=True)(source)
+    state = batched.init_state(jax.random.PRNGKey(0))
+    
+    batch1, mask1, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch1["value"]), np.array([0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask1), np.array([True, True]))
+    
+    # Should pad the last element with zero and mask it as False
+    batch2, mask2, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch2["value"]), np.array([2, 0], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
+
+
+def test_batch_transform_drop_last():
+    data = {"value": jnp.array([0, 1, 2, 3, 4], dtype=jnp.int32)}
+    source = ArraySource(data=data, ordering="sequential")
+    
+    # Opt-in drop_last behavior
+    batched = BatchTransform(batch_size=2, drop_last=True)(source)
+    state = batched.init_state(jax.random.PRNGKey(0))
+    
+    # Epoch 1, Batch 1
+    batch1, mask1, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch1["value"]), np.array([0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask1), np.array([True, True]))
+    
+    # Epoch 1, Batch 2
+    batch2, mask2, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch2["value"]), np.array([2, 3], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, True]))
+    
+    # Epoch 2, Batch 1 (Element 4 is dropped, starts over at 0)
+    batch3, mask3, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch3["value"]), np.array([0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask3), np.array([True, True]))
+
+
 def test_batch_transform_and_device_put_applied():
     data = {"inputs": jnp.arange(4, dtype=jnp.float32).reshape(4, 1)}
     target_device = jax.devices()[0]
@@ -383,6 +468,7 @@ def test_disk_sample_source_streams_via_callback():
     )
     batched = BatchTransform(
         batch_size=2,
+        pad_last_batch=True,
         element_spec_override=source.element_spec(),
     )(source)
 
@@ -421,6 +507,7 @@ def test_disk_sample_source_infers_spec_when_missing():
 
     batched = BatchTransform(
         batch_size=2,
+        pad_last_batch=True,
         element_spec_override=spec,
     )(source)
 
@@ -470,9 +557,8 @@ def test_time_series_batch_transform_packed_mode_marks_sequence_boundaries():
     data = {"context": contexts}
 
     source = ArraySource(data=data, ordering="sequential")
-    pipeline = BatchTransform(batch_size=2)(source)
+    pipeline = BatchTransform(batch_size=2, pad_last_batch=True)(source)        
     pipeline = TimeSeriesBatchTransform(mode="packed")(pipeline)
-
     state = pipeline.init_state(jax.random.PRNGKey(0))
     batch, mask, state = pipeline.next(state)
 

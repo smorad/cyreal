@@ -41,14 +41,32 @@ class SourceTransform(Source, Protocol):
 
 @dataclass
 class BatchTransform:
-    """Batch elements emitted by a source."""
+    """Batch elements emitted by a source.
+    
+    If both drop_last and pad_last_batch are False (default behavior), the final batch will wrap around and contain some samples from the following epoch. This ensures the batch size is consistent to prevent recompiles. E.g.,
+
+    D = [1, 2, 3, 4, 5], batch_size=2
+    Epoch 1: [1, 2], [3, 4], [5, 1]
+    Epoch 2: [2, 3], [4, 5], [1, 2]
+
+    If drop_last is True, the final batch will be dropped if it contains fewer than batch_size samples. E.g.,
+    D = [1, 2, 3, 4, 5], batch_size=2, drop_last=True
+    Epoch 1: [1, 2], [3, 4]
+    Epoch 2: [1, 2], [3, 4]
+
+    If pad_last_batch is True, the final batch will be padded with zeros if it contains fewer than batch_size samples. Make sure you use the mask to ignore padded values. E.g.,
+    D = [1, 2, 3, 4, 5], batch_size=2, pad_last_batch=True
+    Epoch 1: [1, 2], [3, 4], [5, 0]
+    Epoch 2: [1, 2], [3, 4], [5, 0]
+    """
 
     batch_size: int
     """Number of elements per batch."""
     drop_last: bool = False
     """If True, drop the final batch if it is less than batch_size."""
     pad_last_batch: bool = False
-    """If True, pad the final batch with zeros if it is less than batch_size. Useful to prevent a second jit recompile. Make sure you use the mask to ignore padded values."""
+    """If True, pad the final batch with zeros if it is less than batch_size. Make sure you
+    use the provided mask in your train loop to avoid padded values."""
     element_spec_override: PyTree | None = None
 
     def __call__(self, inner: Source) -> Source:
@@ -84,7 +102,7 @@ class _BatchTransformSource(SourceTransform):
     inner: Source
     batch_size: int
     drop_last: bool = False
-    pad_last_batch: bool = True
+    pad_last_batch: bool = False
     element_spec_override: PyTree | None = None
 
     def __post_init__(self) -> None:
@@ -186,7 +204,10 @@ class _BatchTransformSource(SourceTransform):
                 updated_mask = mask.at[i].set(False)
                 return (inner_state, position, updated_buffer, updated_mask), None
 
-            return jax.lax.cond(remaining > 0, _consume, _pad, operand=None)
+            if self.pad_last_batch:
+                return jax.lax.cond(remaining > 0, _consume, _pad, operand=None)
+            else:
+                return _consume(None)
 
         (inner_state, position, batch, mask), _ = jax.lax.scan(
             body,
@@ -194,11 +215,7 @@ class _BatchTransformSource(SourceTransform):
             jnp.arange(self.batch_size),
         )
 
-        wrapped_position = jnp.where(
-            position >= self._samples_per_epoch,
-            jnp.array(0, dtype=jnp.int32),
-            position,
-        )
+        wrapped_position = position % self._samples_per_epoch
         return batch, mask, _BatchTransformState(
             inner_state=inner_state,
             position_in_epoch=wrapped_position,
