@@ -43,9 +43,22 @@ class SourceTransform(Source, Protocol):
 class BatchTransform:
     """Batch elements emitted by a source.
     
-    If both drop_last and pad_last_batch are False, the final batch will wrap around
-    and contain some samples from the following epoch. This ensures the batch size is 
-    consistent to prevent recompiles.
+    If both drop_last and pad_last_batch are False (default behavior), the final batch will wrap around and contain some samples from the following epoch. This ensures the batch size is 
+    consistent to prevent recompiles. E.g.,
+
+    D = [1, 2, 3, 4, 5], batch_size=2
+    Epoch 1: [1, 2], [3, 4], [5, 1]
+    Epoch 2: [2, 3], [4, 5], [1, 2]
+
+    If drop_last is True, the final batch will be dropped if it contains fewer than batch_size samples. E.g.,
+    D = [1, 2, 3, 4, 5], batch_size=2, drop_last=True
+    Epoch 1: [1, 2], [3, 4]
+    Epoch 2: [1, 2], [3, 4]
+
+    If pad_last_batch is True, the final batch will be padded with zeros if it contains fewer than batch_size samples. Make sure you use the mask to ignore padded values. E.g.,
+    D = [1, 2, 3, 4, 5], batch_size=2, pad_last_batch=True
+    Epoch 1: [1, 2], [3, 4], [5, 0]
+    Epoch 2: [1, 2], [3, 4], [5, 0]
     """
 
     batch_size: int
@@ -53,7 +66,7 @@ class BatchTransform:
     drop_last: bool = False
     """If True, drop the final batch if it is less than batch_size."""
     pad_last_batch: bool = False
-    """If True, pad the final batch with zeros if it is less than batch_size. Useful to prevent a second jit recompile. Make sure you use the mask to ignore padded values. Make sure you
+    """If True, pad the final batch with zeros if it is less than batch_size. Make sure you
     use the provided mask in your train loop to avoid padded values."""
     element_spec_override: PyTree | None = None
 

@@ -110,6 +110,30 @@ def test_batch_transform_pad_last_batch():
     np.testing.assert_array_equal(np.asarray(mask2), np.array([True, False]))
 
 
+def test_batch_transform_drop_last():
+    data = {"value": jnp.array([0, 1, 2, 3, 4], dtype=jnp.int32)}
+    source = ArraySource(data=data, ordering="sequential")
+    
+    # Opt-in drop_last behavior
+    batched = BatchTransform(batch_size=2, drop_last=True)(source)
+    state = batched.init_state(jax.random.PRNGKey(0))
+    
+    # Epoch 1, Batch 1
+    batch1, mask1, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch1["value"]), np.array([0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask1), np.array([True, True]))
+    
+    # Epoch 1, Batch 2
+    batch2, mask2, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch2["value"]), np.array([2, 3], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask2), np.array([True, True]))
+    
+    # Epoch 2, Batch 1 (Element 4 is dropped, starts over at 0)
+    batch3, mask3, state = batched.next(state)
+    np.testing.assert_array_equal(np.asarray(batch3["value"]), np.array([0, 1], dtype=np.int32))
+    np.testing.assert_array_equal(np.asarray(mask3), np.array([True, True]))
+
+
 def test_batch_transform_and_device_put_applied():
     data = {"inputs": jnp.arange(4, dtype=jnp.float32).reshape(4, 1)}
     target_device = jax.devices()[0]
