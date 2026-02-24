@@ -549,6 +549,13 @@ class GymnaxSource(Source[GymnaxSourceState]):
         done_flag = jnp.reshape(done_flag, ())
         reset_obs, reset_env_state = self.env.reset(done_reset_key, self.env_params)
 
+        # Ensure reset_env_state has the same dtypes as next_env_state
+        reset_env_state = jax.tree_util.tree_map(
+            lambda r, n: r.astype(n.dtype) if hasattr(r, "astype") and hasattr(n, "dtype") else r,
+            reset_env_state,
+            next_env_state,
+        )
+
         cont_obs, cont_env_state = jax.lax.cond(
             done_flag,
             lambda _: (reset_obs, reset_env_state),
