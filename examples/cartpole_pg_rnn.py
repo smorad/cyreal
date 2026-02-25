@@ -12,7 +12,9 @@ import optax
 import tqdm
 from gymnax.wrappers import purerl
 
-from cyreal import BatchTransform, DataLoader, GymnaxSource
+from cyreal.transforms import BatchTransform
+from cyreal.loader import DataLoader
+from cyreal.sources import GymnaxSource
 from cyreal.rl import set_loader_policy_state
 
 
