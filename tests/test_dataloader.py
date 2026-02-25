@@ -25,6 +25,33 @@ from cyreal.transforms import (
 from cyreal.rl import set_loader_policy_state, set_source_policy_state
 
 
+def test_runtime(caplog):
+    import logging
+    data = {"inputs": jnp.arange(10, dtype=jnp.float32).reshape(10, 1)}
+    pipeline = [
+        ArraySource(data=data, ordering="sequential"),
+        BatchTransform(batch_size=2),
+        DevicePutTransform(),
+    ]
+    loader = DataLoader(pipeline=pipeline)
+    state = loader.init_state(jax.random.key(0))
+
+    jax.config.update("jax_explain_cache_misses", True)
+    
+    with caplog.at_level(logging.WARNING):
+        # First call should trigger a cache miss
+        batch, state, mask = jax.jit(loader.next)(state)
+        assert "TRACING CACHE MISS" in caplog.text
+        
+        caplog.clear()
+        
+        # Subsequent calls should hit the JIT cache
+        for i in range(9):
+            batch, state, mask = jax.jit(loader.next)(state)
+        assert "TRACING CACHE MISS" not in caplog.text
+
+    jax.config.update("jax_explain_cache_misses", False)
+
 def test_next_padding_and_epoch_reset():
     data = {
         "inputs": jnp.arange(5, dtype=jnp.float32).reshape(5, 1),

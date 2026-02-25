@@ -27,9 +27,10 @@ pipeline = [
 loader = DataLoader(pipeline=pipeline)
 # Initialize the loader state
 state = loader.init_state(jax.random.key(0))
-
+iterate = jax.jit(loader.next)
 # Iterate over the data for one epoch
-for batch, mask in loader.iterate(state):
+for _ in range(loader.steps_per_epoch):
+  batch, state, mask = iterate(state)
   ...  # train your network!
 ```
 """
