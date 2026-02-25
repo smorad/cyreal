@@ -60,13 +60,15 @@ See our [documentation](https://smorad.github.io/cyreal/cyreal.html) for more ex
 - Do you enjoy premature optimization? [Why not `jit` the entire training epoch?](https://smorad.github.io/cyreal/cyreal/tutorials/scan_and_jit.html)
 - For the dirty and impure, we support [logging metrics from within a `jit`ted loader.](https://smorad.github.io/cyreal/cyreal/tutorials/host_callback.html)
 - Got yourself a huge dataset? [Stream from a disk-backed source.](https://smorad.github.io/cyreal/cyreal/tutorials/disk_stream.html)
-- Afraid of finite datasets? We provide [`gymnax`-backed data sources for online reinforcement learning.](https://smorad.github.io/cyreal/cyreal/tutorials/rl_quickstart.html)
+- Afraid of finite datasets? We provide `gymnax`-backed data sources for both [online reinforcement learning](https://smorad.github.io/cyreal/cyreal/tutorials/rl_offline.html) and [offline reinforcement learning](https://smorad.github.io/cyreal/cyreal/tutorials/rl_quickstart.html)
 - Starving researcher/temporarily embarrassed hyperscaler? We support continual learning via [reservoir sampling and replay buffers.](https://smorad.github.io/cyreal/cyreal/tutorials/buffer_quickstart.html)
 
 We also provide full end to end training examples
 - [MNIST](examples/mnist_equinox.py)
 - [Time Series](examples/time_series_rnn.py)
 - [Reinforcement Learning](examples/cartpole_pg.py)
+- [Vectorized RL](examples/cartpole_pg_multienv.py)
+- [Offline RL](examples/cartpole_offline.py)
 
 ## Speed Test
 You can compare the speed to the `grain` dataloader using [this script](cyreal/examples/speed_test.py). This is how long it takes to iterate though one epoch of MNIST
