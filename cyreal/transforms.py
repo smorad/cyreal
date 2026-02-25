@@ -742,28 +742,20 @@ class DevicePutTransform:
 @dataclass
 class _DevicePutTransformSource(SourceTransform):
     inner: Source
-    device: jax.Device | str | None = None
+    device: jax.Device
 
     def __post_init__(self) -> None:
-        if self.device is None:
-            devices = jax.devices()
-            if not devices:
-                raise ValueError("DevicePutTransform requires at least one JAX device.")
-            target = devices[0]
-        else:
-            target = self.device
-        self._device = _resolve_device(target)
         self.steps_per_epoch = self.inner.steps_per_epoch
 
     def element_spec(self) -> PyTree:
         return self.inner.element_spec()
 
-    def init_state(self, key: jax.Array | None = None):
+    def init_state(self, key: jax.Array):
         return self.inner.init_state(key)
 
     def next(self, state):
         batch, mask, inner_state = self.inner.next(state)
-        batch = tree_util.tree_map(lambda arr: jax.device_put(arr, self._device), batch)
+        batch = tree_util.tree_map(lambda arr: jax.device_put(arr, self.device), batch)
         return batch, mask, inner_state
 
 

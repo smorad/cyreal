@@ -28,14 +28,6 @@ class Source(Protocol[StateT]):
 
     def init_state(self, key: jax.Array) -> StateT:
         """Return an initial state for the source.
-
-        Args:
-            key: Optional PRNG key used for randomized behavior such as
-                shuffling. Implementations should fall back to a default key
-                when ``None`` is provided.
-
-        Returns:
-            Backend-specific state object that must be passed to ``next``.
         """
         ...
 
@@ -131,7 +123,13 @@ class ArraySource(Source[_ArraySourceState]):
     """
 
     data: PyTree
+    """Source data, organized as a PyTree of arrays with a leading sample dimension."""
+    device: jax.Device = jax.devices(backend='cpu')[0]
+    """Device which ArraySource uses to store its own state. The device of the output data
+    will be determined following jax device promotion rules.
+    """
     ordering: Literal["sequential", "shuffle"] = "shuffle"
+    """Sample ordering strategy, either 'sequential' or 'shuffle'. Shuffling occurs at the epoch level, not within the prefetch buffer."""
 
     def __post_init__(self) -> None:
         leaves, self._treedef = tree_util.tree_flatten(self.data)
@@ -147,7 +145,7 @@ class ArraySource(Source[_ArraySourceState]):
             raise ValueError("Dataset cannot be empty.")
 
         self.steps_per_epoch = self._num_samples
-        self._mask_template = jnp.ones(self._num_samples, dtype=bool)
+        self._mask_template = jnp.ones(self._num_samples, dtype=bool, device=self.device)
         self._element_spec = tree_util.tree_map(
             lambda leaf: jax.ShapeDtypeStruct(shape=leaf.shape[1:], dtype=leaf.dtype),
             self.data,
@@ -162,7 +160,7 @@ class ArraySource(Source[_ArraySourceState]):
         return self._element_spec
 
     def _build_epoch_indices(self, key: jax.Array) -> tuple[jax.Array, jax.Array]:
-        base = jnp.arange(self._num_samples)
+        base = jnp.arange(self._num_samples, device=self.device)
         if self.ordering == "shuffle":
             base = jax.random.permutation(key, base)
         elif self.ordering != "sequential":
@@ -171,24 +169,26 @@ class ArraySource(Source[_ArraySourceState]):
         return base, self._mask_template
 
     def init_state(self, key: jax.Array) -> _ArraySourceState:
-        """Create the initial iteration state.
-
-        Args:
-            key: Optional PRNG key. Defaults to ``jax.random.PRNGKey(0)`` when
-                omitted.
-        """
-        key, perm_key = jax.random.split(key)
+        key, perm_key = jax.device_put(jax.random.split(key), self.device)
         indices, mask = self._build_epoch_indices(perm_key)
-        position = jnp.array(0, dtype=jnp.int32)
-        epoch = jnp.array(0, dtype=jnp.int32)
+        position = jnp.array(0, dtype=jnp.uint32, device=self.device)
+        epoch = jnp.array(0, dtype=jnp.uint32, device=self.device)
         return _ArraySourceState(indices=indices, mask=mask, position=position, key=key, epoch=epoch)
 
     def next(self, state: _ArraySourceState) -> tuple[PyTree, jax.Array, _ArraySourceState]:
         """Return the next sample (with mask) and the advanced state."""
         index = jax.lax.dynamic_index_in_dim(state.indices, state.position, axis=0, keepdims=False)
         mask_value = jax.lax.dynamic_index_in_dim(state.mask, state.position, axis=0, keepdims=False)
-        sample = tree_util.tree_map(
-            lambda arr: jax.lax.dynamic_index_in_dim(arr, index, axis=0, keepdims=False),
+        
+        # When indexing into data, we must ensure the index is on the same device as the data
+        # to avoid JAX cross-device compilation errors.
+        sample = jax.tree.map(
+            lambda arr: jax.lax.dynamic_index_in_dim(
+                arr, 
+                jax.device_put(index, list(arr.devices())[0] if hasattr(arr, "devices") else None), 
+                axis=0, 
+                keepdims=False
+            ),
             self.data,
         )
 
@@ -200,7 +200,7 @@ class ArraySource(Source[_ArraySourceState]):
             return _ArraySourceState(
                 indices=indices,
                 mask=mask,
-                position=jnp.array(0, dtype=jnp.int32),
+                position=jnp.array(0, dtype=jnp.uint32, device=self.device),
                 key=new_key,
                 epoch=state.epoch + 1,
             )
@@ -234,6 +234,9 @@ class DiskSource(Source[_DiskSourceState]):
     """Optional PyTree of `jax.ShapeDtypeStruct` describing the shape and dtype of samples."""
     ordering: Literal["sequential", "shuffle"] = "shuffle"
     """Sample ordering strategy, either 'sequential' or 'shuffle'. The shuffling occurs over the entire dataset, not within the prefetch buffer."""
+    device: jax.Device = jax.devices(backend='cpu')[0]
+    """Device which ArraySource uses to store its own state. The device of the output data
+    will be determined following jax device promotion rules."""
     prefetch_size: int = 64
     """Number of samples to prefetch into a JAX array buffer. Set this larger to achieve better throughput at the cost of more memory usage."""
 
@@ -296,20 +299,20 @@ class DiskSource(Source[_DiskSourceState]):
         """Build the starting state, optionally seeding randomness with ``key``."""
         key, perm_key = jax.random.split(key)
         indices = self._build_epoch_indices(perm_key)
-        position = jnp.array(0, dtype=jnp.int32)
-        epoch = jnp.array(0, dtype=jnp.int32)
+        position = jnp.array(0, dtype=jnp.uint32, device=self.device)
+        epoch = jnp.array(0, dtype=jnp.uint32, device=self.device)
         return _DiskSourceState(
             indices=indices,
             position=position,
             key=key,
             epoch=epoch,
             buffer=self._buffer_template,
-            buffer_pos=jnp.array(0, dtype=jnp.int32),
-            buffer_count=jnp.array(0, dtype=jnp.int32),
+            buffer_pos=jnp.array(0, dtype=jnp.uint32, device=self.device),
+            buffer_count=jnp.array(0, dtype=jnp.uint32, device=self.device),
         )
 
     def _chunk_callback(self, indices: np.ndarray, mask: np.ndarray) -> PyTree:
-        idx_array = np.asarray(indices, dtype=np.int64)
+        idx_array = np.asarray(indices, dtype=np.uint32)
         mask_array = np.asarray(mask, dtype=bool)
         samples: list[PyTree] = []
         for keep, idx in zip(mask_array, idx_array):
@@ -325,12 +328,12 @@ class DiskSource(Source[_DiskSourceState]):
             indices = self._build_epoch_indices(perm_key)
             return _DiskSourceState(
                 indices=indices,
-                position=jnp.array(0, dtype=jnp.int32),
+                position=jnp.array(0, dtype=jnp.uint32, device=self.device),
                 key=new_key,
                 epoch=state.epoch + 1,
                 buffer=self._buffer_template,
-                buffer_pos=jnp.array(0, dtype=jnp.int32),
-                buffer_count=jnp.array(0, dtype=jnp.int32),
+                buffer_pos=jnp.array(0, dtype=jnp.uint32, device=self.device),
+                buffer_count=jnp.array(0, dtype=jnp.uint32, device=self.device),
             )
 
         return jax.lax.cond(state.position >= self._num_samples, _reset, lambda s: s, state)
@@ -344,8 +347,8 @@ class DiskSource(Source[_DiskSourceState]):
             remaining = self._num_samples - refreshed.position
             chunk = jnp.minimum(remaining, self.prefetch_size)
             chunk = jnp.maximum(chunk, 0)
-            chunk = chunk.astype(jnp.int32)
-            offsets = jnp.arange(self.prefetch_size, dtype=jnp.int32)
+            chunk = chunk.astype(jnp.uint32)
+            offsets = jnp.arange(self.prefetch_size, dtype=jnp.uint32)
             gather_positions = jnp.minimum(
                 refreshed.position + offsets,
                 refreshed.indices.shape[0] - 1,
@@ -364,7 +367,7 @@ class DiskSource(Source[_DiskSourceState]):
                 key=refreshed.key,
                 epoch=refreshed.epoch,
                 buffer=buffer,
-                buffer_pos=jnp.array(0, dtype=jnp.int32),
+                buffer_pos=jnp.array(0, dtype=jnp.uint32, device=self.device),
                 buffer_count=chunk,
             )
 
@@ -503,8 +506,8 @@ class GymnaxSource(Source[GymnaxSourceState]):
             env_state=env_state,
             obs=obs,
             key=key,
-            step=jnp.array(0, dtype=jnp.int32),
-            epoch=jnp.array(0, dtype=jnp.int32),
+            step=jnp.array(0, dtype=jnp.uint32),
+            epoch=jnp.array(0, dtype=jnp.uint32),
             policy_state=None,
             new_episode=jnp.array(True, dtype=jnp.bool_),
         )
@@ -572,7 +575,7 @@ class GymnaxSource(Source[GymnaxSourceState]):
                 env_state=epoch_env_state,
                 obs=epoch_obs,
                 key=key,
-                step=jnp.array(0, dtype=jnp.int32),
+                step=jnp.array(0, dtype=jnp.uint32),
                 epoch=state.epoch + 1,
                 policy_state=updated_policy_state,
                 new_episode=jnp.array(True, dtype=jnp.bool_),
