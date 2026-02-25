@@ -225,16 +225,16 @@ def test_grain_gpu(batch_size: int=32):
 if __name__ == "__main__":
     has_gpu = jax.devices()[0].platform == "gpu"
     tests = {
-        # "Grain CPU Dataset Iterator": test_grain_cpu,
-        # "Grain GPU Dataset Iterator": test_grain_gpu if has_gpu else lambda: float('nan'),
+        "Grain CPU Dataset Iterator": test_grain_cpu,
+        "Grain GPU Dataset Iterator": test_grain_gpu if has_gpu else lambda: float('nan'),
 
-        # "CPU Dataset GPU JIT Batch": test_cpu_gpu_jit if has_gpu else lambda: float('nan'),
+        "CPU Dataset GPU JIT Batch": test_cpu_gpu_jit if has_gpu else lambda: float('nan'),
         "CPU Dataset JIT Batch": test_cpu_jit,
-        # "GPU Dataset JIT Batch": test_gpu_jit if has_gpu else lambda: float('nan'),
+        "GPU Dataset JIT Batch": test_gpu_jit if has_gpu else lambda: float('nan'),
 
         "CPU Dataset Scan": test_cpu_scan,
-        # "CPU Dataset GPU Scan": test_cpu_gpu_scan if has_gpu else lambda: float('nan'),
-        # "GPU Dataset Scan": test_gpu_scan if has_gpu else lambda: float('nan'),
+        "CPU Dataset GPU Scan": test_cpu_gpu_scan if has_gpu else lambda: float('nan'),
+        "GPU Dataset Scan": test_gpu_scan if has_gpu else lambda: float('nan'),
 
         # # Warning: Very slow!
         # "CPU Dataset Iterator": test_cpu_iter,
