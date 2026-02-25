@@ -14,7 +14,6 @@ from cyreal.sources import (
 )
 from cyreal.transforms import (
     BatchTransform,
-    DevicePutTransform,
     HostCallbackTransform,
     MapTransform,
     RenameTransform,
@@ -31,7 +30,6 @@ def test_runtime(caplog):
     pipeline = [
         ArraySource(data=data, ordering="sequential"),
         BatchTransform(batch_size=2),
-        DevicePutTransform(),
     ]
     loader = DataLoader(pipeline=pipeline)
     state = loader.init_state(jax.random.key(0))
@@ -160,30 +158,6 @@ def test_batch_transform_drop_last():
     np.testing.assert_array_equal(np.asarray(batch3["value"]), np.array([0, 1], dtype=np.int32))
     np.testing.assert_array_equal(np.asarray(mask3), np.array([True, True]))
 
-
-def test_batch_transform_and_device_put_applied():
-    data = {"inputs": jnp.arange(4, dtype=jnp.float32).reshape(4, 1)}
-    target_device = jax.devices()[0]
-
-    source = ArraySource(data=data, ordering="sequential")
-    pipeline = BatchTransform(
-        batch_size=2,
-        drop_last=True,
-    )(source)
-
-    def transform(batch, mask):
-        del mask
-        return {"inputs": batch["inputs"] + 10.0}
-
-    pipeline = MapTransform(fn=transform)(pipeline)
-    pipeline = DevicePutTransform(device=target_device)(pipeline)
-    loader = DataLoader(pipeline=pipeline)
-    state = loader.init_state(jax.random.PRNGKey(0))
-
-    batch, state, mask = loader.next(state)
-    np.testing.assert_array_equal(np.asarray(batch["inputs"]).ravel(), np.array([10.0, 11.0]))
-    assert batch["inputs"].device == target_device
-    np.testing.assert_array_equal(np.asarray(mask), np.array([True, True]))
 
 def test_manual_pipeline_composition_without_operator_overloads():
     data = {"inputs": jnp.arange(4, dtype=jnp.float32).reshape(4, 1)}

@@ -18,7 +18,7 @@ Write fast dataloaders without `torch` or `tensorflow`
 import jax
 import jax.numpy as jnp
 
-from cyreal.transforms import BatchTransform, DevicePutTransform
+from cyreal.transforms import BatchTransform
 from cyreal.loader import DataLoader
 from cyreal.sources import ArraySource
 from cyreal.datasets import MNISTDataset

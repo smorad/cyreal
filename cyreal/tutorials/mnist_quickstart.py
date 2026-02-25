@@ -6,10 +6,8 @@ import jax
 import jax.numpy as jnp
 
 from cyreal.sources import ArraySource
-from cyreal.transforms import (
-  BatchTransform,
-  DevicePutTransform,
-)
+from cyreal.transforms import BatchTransform
+
 from cyreal.loader import DataLoader
 from cyreal.datasets import MNISTDataset
 
@@ -20,8 +18,6 @@ pipeline = [
   ArraySource(train_data, ordering="shuffle"),
   # Batch the data
   BatchTransform(batch_size=128),
-  # Move the batch onto the GPU
-  DevicePutTransform(),
 ]
 # Construct the dataloader
 loader = DataLoader(pipeline=pipeline)

@@ -20,7 +20,6 @@ from cyreal.sources import (
 
 from cyreal.transforms import (
     BatchTransform,
-    DevicePutTransform,
     HostCallbackTransform,
 )
 
@@ -34,7 +33,7 @@ def test_readme():
     import jax
     import jax.numpy as jnp
 
-    from cyreal.transforms import BatchTransform, DevicePutTransform
+    from cyreal.transforms import BatchTransform
     from cyreal.loader import DataLoader
     from cyreal.rl import set_loader_policy_state, set_source_policy_state
     from cyreal.sources import ArraySource
@@ -47,7 +46,6 @@ def test_readme():
     # Batch it
     BatchTransform(batch_size=128),
     # Move the batch to the GPU
-    DevicePutTransform(),
     ]
     loader = DataLoader(pipeline)
     state = loader.init_state(jax.random.key(0))
