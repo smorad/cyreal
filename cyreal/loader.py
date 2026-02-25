@@ -61,6 +61,11 @@ class DataLoader:
     def __post_init__(self) -> None:
         self._source = self._coerce_pipeline(self.pipeline)
         self.steps_per_epoch = self._source.steps_per_epoch
+        # Very important to avoid JIT recompilation due to method rebinding!
+        # Otherwise, calling `loader.next` performs dynamic lookup on the method. 
+        # Since `next` is not a staticmethod, this lookup returns a new bound method object on every call.
+        # This causes a cache miss in the JIT cache because the function object is different! 
+        self.next = self.next  # type: ignore[assignment]
 
     def _coerce_pipeline(self, pipeline: Source | Sequence[Any]) -> Source:
         if self._looks_like_source(pipeline):
@@ -102,25 +107,33 @@ class DataLoader:
         raise TypeError("Pipeline entries after the first must be transforms or callables returning Sources.")
 
     def init_state(self, key: jax.Array) -> _LoaderState:
+        """Returns a new loader state using the given random key."""
         inner_state = self._source.init_state(key)
         return _LoaderState(inner_state=inner_state)
 
     def next(self, state: _LoaderState) -> Tuple[PyTree, _LoaderState, jax.Array]:
+        """Run the pipeline for one step, returning the batch, new loader state, and mask.
+        
+        This function is jittable and can be used in `jax.lax.scan` or jitted directly for fast iteration.
+
+        ```python
+        state = loader.init_state(jax.random.key(0))
+        for _ in range(loader.steps_per_epoch):
+            batch, state, mask = loader.next(state)
+            ...
+        ```
+        """
         batch, mask, inner_state = self._source.next(state.inner_state)
         return batch, _LoaderState(inner_state=inner_state), mask
 
     def iterate(self, state: _LoaderState, *, steps: int | None = None) -> _LoaderIterator:
         """Return a Python iterator over loader outputs.
 
+        ```python
         for batch, mask in loader.iterate(state):
             ...
-
-        WARNING: This method is very slow compared to using `loader.scan_epoch` or jitting `loader.next`.
-
-        Args:
-            state: Starting loader state.
-            steps: Number of steps (updates) to iterate; defaults to a single epoch.
-                Pass ``None`` to iterate indefinitely.
+        ```
+        WARNING: This method is slow compared to using `loader.scan_epoch` or jitting `loader.next`.
         """
 
         if steps is None:
@@ -138,11 +151,13 @@ class DataLoader:
     ):
         """Run a full epoch via `jax.lax.scan` with constant-shape batches.
         
+        ```python
         def body_fn(model_state, batch, mask):
             ...
             return new_model_state, None
 
         state, batch = loader.scan_epoch(state, model_state, body_fn)
+        ```
         """
         def _body(loop_state, _):
             loader_state, loop_carry = loop_state
