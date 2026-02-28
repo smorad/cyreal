@@ -18,7 +18,7 @@ Write fast dataloaders without `torch` or `tensorflow`
 import jax
 import jax.numpy as jnp
 
-from cyreal.transforms import BatchTransform, DevicePutTransform
+from cyreal.transforms import BatchTransform
 from cyreal.loader import DataLoader
 from cyreal.sources import ArraySource
 from cyreal.datasets import MNISTDataset
@@ -29,15 +29,14 @@ pipeline = [
   ArraySource(train_data, ordering="shuffle"),
   # Batch it
   BatchTransform(batch_size=128),
-  # Move the batch to the GPU
-  DevicePutTransform(),
 ]
 loader = DataLoader(pipeline)
 state = loader.init_state(jax.random.key(0))
 
 for epoch in range(2):
     for _ in range(loader.steps_per_epoch):
-        batch, state, mask = jax.jit(loader.next)(state)
+        # JIT the loader on the CPU or GPU
+        batch, state, mask = jax.jit(loader.next, backend='cpu')(state)
         ... # Train your network
 ```
 
@@ -51,6 +50,7 @@ def update(model_state, batch, mask):
     return model_state, None
 
 for epoch in range(2):
+    # Runs everything on the default jax device
     state, model_state, _ = loader.scan_epoch(state, model_state, update)
 ```
 
@@ -73,34 +73,17 @@ You can compare the speed to the `grain` dataloader using [this script](cyreal/e
 
 ### MacBook M4 Pro
 
-|Library|Dataset Device|Batch Device|Method|Time (s)|
-|---|---|---|---|---|
-|`grain`|CPU|CPU| Iterator| 1.33
-|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.04
-|`cyreal`|CPU|CPU| `scan_epoch`| 0.09
+|Library|Device|Method|Time (s)|
+|---|---|---|---|
+|`grain`|CPU| Iterator| 1.05
+|`cyreal`|CPU| `jit(loader.next)`| 0.04
+|`cyreal`|CPU| `scan_epoch`| 0.08
 
-### A40 with Wimpy CPU
-
-|Library|Dataset Device|Batch Device|Method|Time (s)|
-|---|---|---|---|---|
-|`grain`|CPU|CPU| Iterator| 10.34
-|`grain`|CPU|GPU| Iterator| 11.65
-|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.66
-|`cyreal`|CPU|GPU| `jit(loader.next)`| 0.68
-|`cyreal`|GPU|GPU| `jit(loader.next)`| 0.66
-|`cyreal`|CPU|CPU| `scan_epoch`| 3.78
-|`cyreal`|CPU|GPU| `scan_epoch`| 4.00
-|`cyreal`|GPU|GPU| `scan_epoch`| 4.35
 
 ### RTX 5090
 
-|Library|Dataset Device|Batch Device|Method|Time (s)|
-|---|---|---|---|---|
-|`grain`|CPU|CPU| Iterator| 3.80
-|`grain`|CPU|GPU| Iterator| 4.04
-|`cyreal`|CPU|CPU| `jit(loader.next)`| 0.50
-|`cyreal`|CPU|GPU| `jit(loader.next)`| 0.50
-|`cyreal`|GPU|GPU| `jit(loader.next)`| 0.50
-|`cyreal`|CPU|CPU| `scan_epoch`| 2.71
-|`cyreal`|CPU|GPU| `scan_epoch`| 2.72
-|`cyreal`|GPU|GPU| `scan_epoch`| 2.68
+|Library|Device|Method|Time (s)|
+|---|---|---|---|
+|`grain`|GPU| Iterator| 4.04
+|`cyreal`|GPU| `jit(loader.next)`| 0.30
+|`cyreal`|GPU| `scan_epoch`| 1.44

@@ -705,68 +705,6 @@ class _HostCallbackTransformSource(SourceTransform):
         return transformed, mask, inner_state
 
 
-def _resolve_device(device: jax.Device | str) -> jax.Device:
-    if isinstance(device, jax.Device):
-        return device
-    device_str = device
-    index = None
-    if ":" in device_str:
-        device_str, idx_str = device_str.split(":", 1)
-        index = int(idx_str)
-    matching = [d for d in jax.devices() if d.platform == device_str]
-    if not matching:
-        raise ValueError(f"No JAX devices found for platform '{device}'.")
-    if index is not None:
-        if index >= len(matching):
-            raise ValueError(
-                f"Requested device '{device}' but only {len(matching)} devices available."
-            )
-        return matching[index]
-    return matching[0]
-
-
-@dataclass
-class DevicePutTransform:
-    """Move batches onto a target device.
-    
-    Use this to move your data onto accelerators (e.g., GPU/TPU) as part of the data pipeline.
-    """
-
-    device: jax.Device | str | None = None
-    """Target device or device string (e.g., 'cpu', 'gpu:0', 'tpu:1'). If None, defaults to the default jax device."""
-
-    def __call__(self, inner: Source) -> Source:
-        return _DevicePutTransformSource(inner=inner, device=self.device)
-
-
-@dataclass
-class _DevicePutTransformSource(SourceTransform):
-    inner: Source
-    device: jax.Device | str | None = None
-
-    def __post_init__(self) -> None:
-        if self.device is None:
-            devices = jax.devices()
-            if not devices:
-                raise ValueError("DevicePutTransform requires at least one JAX device.")
-            target = devices[0]
-        else:
-            target = self.device
-        self._device = _resolve_device(target)
-        self.steps_per_epoch = self.inner.steps_per_epoch
-
-    def element_spec(self) -> PyTree:
-        return self.inner.element_spec()
-
-    def init_state(self, key: jax.Array | None = None):
-        return self.inner.init_state(key)
-
-    def next(self, state):
-        batch, mask, inner_state = self.inner.next(state)
-        batch = tree_util.tree_map(lambda arr: jax.device_put(arr, self._device), batch)
-        return batch, mask, inner_state
-
-
 def _replace_mapping_item(obj: Mapping[str, Any], key: str, value: Any) -> Mapping[str, Any]:
     if isinstance(obj, MutableMapping):
         clone = obj.copy()

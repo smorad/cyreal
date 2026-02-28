@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from cyreal.sources import ArraySource
-from cyreal.transforms import BatchTransform, DevicePutTransform
+from cyreal.transforms import BatchTransform
 from cyreal.loader import DataLoader
 from cyreal.datasets import MNISTDataset
 
@@ -13,7 +13,6 @@ train_data = MNISTDataset(split="test").as_array_dict()
 pipeline = [
     ArraySource(train_data, ordering="shuffle"),
     BatchTransform(batch_size=128),
-    DevicePutTransform(),
 ]
 loader = DataLoader(pipeline)
 loader_state = loader.init_state(jax.random.key(0))

@@ -5,7 +5,7 @@ but it allows you to work with datasets that do not fit into RAM. The key is to 
 ```python
 import jax
 
-from cyreal.transforms import BatchTransform, DevicePutTransform
+from cyreal.transforms import BatchTransform
 from cyreal.loader import DataLoader
 from cyreal.datasets import MNISTDataset
 
@@ -13,7 +13,6 @@ pipeline = [
     # Prefetch 1024 examples for each disk read
     MNISTDataset.make_disk_source(split="train", ordering="shuffle", prefetch_size=1024),
     BatchTransform(batch_size=128),
-    DevicePutTransform(),
 ]
 
 loader = DataLoader(pipeline=pipeline)

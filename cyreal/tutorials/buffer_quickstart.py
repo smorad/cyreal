@@ -5,7 +5,7 @@ import jax
 import jax.numpy as jnp
 
 from cyreal.sources import ArraySource
-from cyreal.transforms import BufferTransform, BatchTransform, DevicePutTransform
+from cyreal.transforms import BufferTransform, BatchTransform
 from cyreal.loader import DataLoader
 from cyreal.datasets import MNISTDataset
 
@@ -19,7 +19,6 @@ pipeline = [
     # BufferTransform yields 16 samples, and we can perform additional subsampling with
     # BatchTransform if necessary
     BatchTransform(batch_size=8),
-    DevicePutTransform(),
 ]
 loader = DataLoader(pipeline)
 loader_state = loader.init_state(jax.random.key(0))

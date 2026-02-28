@@ -18,7 +18,6 @@ import tqdm
 
 from cyreal.transforms import (
     BatchTransform,
-    DevicePutTransform,
     TimeSeriesBatchTransform,
 )
 from cyreal.loader import DataLoader
@@ -104,7 +103,6 @@ def _build_pipeline(
         source,
         BatchTransform(batch_size=args.batch_size, pad_last_batch=True),
         TimeSeriesBatchTransform(sequence_key="context", mode="batched"),
-        DevicePutTransform(),
     ]
     return DataLoader(pipeline=pipeline)
 
