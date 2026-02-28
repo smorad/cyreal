@@ -75,7 +75,7 @@ You can compare the speed to the `grain` dataloader using [this script](cyreal/e
 
 |Library|Device|Method|Time (s)|
 |---|---|---|---|
-|`grain`|CPU| Iterator| 1.33
+|`grain`|CPU| Iterator| 1.05
 |`cyreal`|CPU| `jit(loader.next)`| 0.04
 |`cyreal`|CPU| `scan_epoch`| 0.08
 
@@ -84,8 +84,6 @@ You can compare the speed to the `grain` dataloader using [this script](cyreal/e
 
 |Library|Device|Method|Time (s)|
 |---|---|---|---|
-|`grain`|CPU| Iterator| 3.80
-|`cyreal`|CPU| `jit(loader.next)`| 0.50
-|`cyreal`|GPU| `jit(loader.next)`| 0.50
-|`cyreal`|CPU| `scan_epoch`| 2.71
-|`cyreal`|GPU| `scan_epoch`| 2.68
+|`grain`|GPU| Iterator| 4.04
+|`cyreal`|GPU| `jit(loader.next)`| 0.30
+|`cyreal`|GPU| `scan_epoch`| 1.44
