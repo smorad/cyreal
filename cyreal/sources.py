@@ -434,26 +434,21 @@ class GymnaxSourceState:
 class GymnaxSource(Source[GymnaxSourceState]):
     """Stream transitions by rolling out a Gymnax environment with a policy.
     
-    Useful for reinforcement learning.
-
-    Args:
-        env: Gymnax environment instance.
-        env_params: Parameters to pass to the environment's reset and step functions.
-        policy_step_fn: Callable that takes (observation, policy_state, new_episode, key) and
-            returns (action, new_policy_state).
-        policy_state_template: Example PyTree carrying everything required by
-            ``policy_step_fn`` (for example, policy parameters and recurrent
-            carries). This template is used only to infer the element spec; callers
-            are responsible for injecting a real policy state into the loader
-            state before calling ``next``.
-        steps_per_epoch: Number of environment steps per epoch for a single environment.
+    Useful for reinforcement learning. For multi-env support, see the `rl_multienv_quickstart` tutorial.
     """
 
     env: Any
+    "Gymnax environment object"
     env_params: Any
+    "Parameters to pass to env.reset and env.step"
     policy_step_fn: Callable[[PyTree, PyTree, jax.Array, jax.Array], tuple[PyTree, PyTree]]
+    "Callable that takes (observation, policy_state, new_episode, key) and returns (action, new_policy_state)"
+    reset_on_epoch: bool = False
+    "Whether to reset the environment at the end of each epoch. If True, all envs are reset at the start of an epoch regardless of whether they have reached a done state. If False, env state persists across epochs."
     policy_state_template: PyTree | None = None
+    "Example PyTree carrying everything required by policy_step_fn (for example, policy parameters and recurrent carries). This template is used only to infer the element spec; callers are responsible for injecting a real policy state into the loader state before calling next."
     steps_per_epoch: int = 1024
+    """Number of environment steps per epoch for a single environment. If you use vmapped envs, total steps per epoch will be `steps_per_epoch * num_envs`."""
 
     def __post_init__(self) -> None:
         if self.steps_per_epoch <= 0:
@@ -485,9 +480,12 @@ class GymnaxSource(Source[GymnaxSourceState]):
             }
             return transition, next_policy_state
 
-        shaped, _ = jax.eval_shape(_sample, jax.random.PRNGKey(0), self.policy_state_template)
+        shaped_transition, _ = jax.eval_shape(_sample, jax.random.PRNGKey(0), self.policy_state_template)
         self._element_spec = tree_util.tree_map(
-            lambda arr: jax.ShapeDtypeStruct(shape=arr.shape, dtype=arr.dtype), shaped
+            lambda arr: jax.ShapeDtypeStruct(shape=arr.shape, dtype=arr.dtype), shaped_transition
+        )
+        self._done_template = jax.ShapeDtypeStruct(
+            shape=shaped_transition["done"].shape, dtype=shaped_transition["done"].dtype
         )
         self.policy_state_template = None
 
@@ -506,12 +504,12 @@ class GymnaxSource(Source[GymnaxSourceState]):
             step=jnp.array(0, dtype=jnp.int32),
             epoch=jnp.array(0, dtype=jnp.int32),
             policy_state=None,
-            new_episode=jnp.array(True, dtype=jnp.bool_),
+            new_episode=jnp.ones(self._done_template.shape, dtype=jnp.bool_),
         )
 
     def next(self, state: GymnaxSourceState) -> tuple[PyTree, jax.Array, GymnaxSourceState]:
         """Roll the environment forward one step and emit a transition."""
-        key, policy_key, step_key, done_reset_key, epoch_reset_key = jax.random.split(state.key, 5)
+        key, policy_key, step_key = jax.random.split(state.key, 3)
 
         if state.policy_state is None:
             raise ValueError(
@@ -543,50 +541,48 @@ class GymnaxSource(Source[GymnaxSourceState]):
             "done": done,
             "info": info,
         }
-        mask = jnp.array(True, dtype=bool)
-
-        done_flag = jnp.asarray(done, dtype=bool)
-        done_flag = jnp.reshape(done_flag, ())
-        reset_obs, reset_env_state = self.env.reset(done_reset_key, self.env_params)
-
-        # Ensure reset_env_state has the same dtypes as next_env_state
-        reset_env_state = jax.tree_util.tree_map(
-            lambda r, n: r.astype(n.dtype) if hasattr(r, "astype") and hasattr(n, "dtype") else r,
-            reset_env_state,
-            next_env_state,
-        )
-
-        cont_obs, cont_env_state = jax.lax.cond(
-            done_flag,
-            lambda _: (reset_obs, reset_env_state),
-            lambda _: (next_obs, next_env_state),
-            operand=None,
-        )
+        mask = jnp.ones_like(done, dtype=jnp.bool_)
 
         next_step = state.step + 1
-        need_epoch_reset = next_step >= self.steps_per_epoch
+        need_epoch_reset = next_step >= self.steps_per_epoch if self.reset_on_epoch else False
 
         def _reset_epoch(_: None):
-            epoch_obs, epoch_env_state = self.env.reset(epoch_reset_key, self.env_params)
+            epoch_key, reset_key = jax.random.split(key)
+            epoch_obs, epoch_env_state = self.env.reset(reset_key, self.env_params)
+            
+            # Ensure reset_env_state has the same dtypes as next_env_state
+            epoch_env_state = jax.tree_util.tree_map(
+                lambda r, n: r.astype(n.dtype) if hasattr(r, "astype") and hasattr(n, "dtype") else r,
+                epoch_env_state,
+                next_env_state,
+            )
+            
+            # Ensure reset_obs has the same dtypes as next_obs
+            epoch_obs = jax.tree_util.tree_map(
+                lambda r, n: r.astype(n.dtype) if hasattr(r, "astype") and hasattr(n, "dtype") else r,
+                epoch_obs,
+                next_obs,
+            )
+            
             return GymnaxSourceState(
                 env_state=epoch_env_state,
                 obs=epoch_obs,
-                key=key,
+                key=epoch_key,
                 step=jnp.array(0, dtype=jnp.int32),
                 epoch=state.epoch + 1,
                 policy_state=updated_policy_state,
-                new_episode=jnp.array(True, dtype=jnp.bool_),
+                new_episode=jnp.ones_like(done, dtype=jnp.bool_),
             )
 
         def _continue(_: None):
             return GymnaxSourceState(
-                env_state=cont_env_state,
-                obs=cont_obs,
+                env_state=next_env_state,
+                obs=next_obs,
                 key=key,
                 step=next_step,
                 epoch=state.epoch,
                 policy_state=updated_policy_state,
-                new_episode=done_flag,
+                new_episode=done,
             )
 
         new_state = jax.lax.cond(need_epoch_reset, _reset_epoch, _continue, operand=None)
